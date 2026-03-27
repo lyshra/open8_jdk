@@ -1,0 +1,3051 @@
+diff --git a/make/conf/branding.conf b/make/conf/branding.conf
+index 912e4f622..fabd9f8c4 100644
+--- a/make/conf/branding.conf
++++ b/make/conf/branding.conf
+@@ -23,16 +23,16 @@
+ # questions.
+ #
+ 
+-LAUNCHER_NAME=openjdk
+-PRODUCT_NAME=OpenJDK
++LAUNCHER_NAME=open8
++PRODUCT_NAME="Open8 Java"
+ PRODUCT_SUFFIX="Runtime Environment"
+ JDK_RC_PLATFORM_NAME=Platform
+-COMPANY_NAME=N/A
+-HOTSPOT_VM_DISTRO="OpenJDK"
++COMPANY_NAME="Open8"
++HOTSPOT_VM_DISTRO="Open8 Java 27"
+ VENDOR_URL=https://openjdk.org/
+ VENDOR_URL_BUG=https://bugreport.java.com/bugreport/
+ VENDOR_URL_VM_BUG=https://bugreport.java.com/bugreport/crash.jsp
+ 
+ # Might need better names for these
+-MACOSX_BUNDLE_NAME_BASE="OpenJDK"
+-MACOSX_BUNDLE_ID_BASE="net.java.openjdk"
++MACOSX_BUNDLE_NAME_BASE="Open8 Java"
++MACOSX_BUNDLE_ID_BASE="com.open8.java"
+diff --git a/make/conf/module-loader-map.conf b/make/conf/module-loader-map.conf
+index 92bffc0e9..baf97bf06 100644
+--- a/make/conf/module-loader-map.conf
++++ b/make/conf/module-loader-map.conf
+@@ -66,6 +66,7 @@ UPGRADEABLE_PLATFORM_MODULES= \
+     #
+ 
+ PLATFORM_MODULES= \
++    java.json \
+     java.se \
+     java.net.http \
+     java.scripting \
+diff --git a/make/conf/version-numbers.conf b/make/conf/version-numbers.conf
+index f82c78224..169a708c4 100644
+--- a/make/conf/version-numbers.conf
++++ b/make/conf/version-numbers.conf
+@@ -26,17 +26,17 @@
+ # Default version, product, and vendor information to use,
+ # unless overridden by configure
+ 
+-DEFAULT_VERSION_FEATURE=25
++DEFAULT_VERSION_FEATURE=27
+ DEFAULT_VERSION_INTERIM=0
+-DEFAULT_VERSION_UPDATE=3
++DEFAULT_VERSION_UPDATE=1
+ DEFAULT_VERSION_PATCH=0
+ DEFAULT_VERSION_EXTRA1=0
+ DEFAULT_VERSION_EXTRA2=0
+ DEFAULT_VERSION_EXTRA3=0
+-DEFAULT_VERSION_DATE=2026-04-21
+-DEFAULT_VERSION_CLASSFILE_MAJOR=69  # "`$EXPR $DEFAULT_VERSION_FEATURE + 44`"
++DEFAULT_VERSION_DATE=2026-03-27
++DEFAULT_VERSION_CLASSFILE_MAJOR=69  # keep at 69 (Java 25 compat) since boot JDK is 25
+ DEFAULT_VERSION_CLASSFILE_MINOR=0
+ DEFAULT_VERSION_DOCS_API_SINCE=11
+-DEFAULT_ACCEPTABLE_BOOT_VERSIONS="24 25"
++DEFAULT_ACCEPTABLE_BOOT_VERSIONS="24 25 26 27"
+ DEFAULT_JDK_SOURCE_TARGET_VERSION=25
+-DEFAULT_PROMOTED_VERSION_PRE=ea
++DEFAULT_PROMOTED_VERSION_PRE=
+diff --git a/make/modules/java.json/Java.gmk b/make/modules/java.json/Java.gmk
+new file mode 100644
+index 000000000..184a7da5c
+--- /dev/null
++++ b/make/modules/java.json/Java.gmk
+@@ -0,0 +1,9 @@
++#
++# Copyright (c) 2025, JavaSuper Project. All rights reserved.
++#
++
++################################################################################
++
++DOCLINT += -Xdoclint:none
++
++################################################################################
+diff --git a/src/java.json/share/classes/java/json/Json.java b/src/java.json/share/classes/java/json/Json.java
+new file mode 100644
+index 000000000..ea65db807
+--- /dev/null
++++ b/src/java.json/share/classes/java/json/Json.java
+@@ -0,0 +1,567 @@
++package java.json;
++
++import java.util.*;
++import java.util.stream.*;
++
++/**
++ * Represents a JSON value. A {@code Json} instance can hold a JSON object,
++ * array, string, number, boolean, or null.
++ *
++ * @since 25
++ */
++public final class Json implements Iterable<Json> {
++
++    private final Object value;
++    private final JsonType type;
++
++    // ---- Private constructors ----
++
++    private Json(Object value, JsonType type) {
++        this.value = value;
++        this.type = type;
++    }
++
++    // ---- Static factory methods ----
++
++    /** Create a Json from a String */
++    public static Json of(String s) {
++        return s == null ? ofNull() : new Json(s, JsonType.STRING);
++    }
++
++    /** Create a Json from an int */
++    public static Json of(int n) {
++        return new Json(n, JsonType.NUMBER);
++    }
++
++    /** Create a Json from a long */
++    public static Json of(long n) {
++        return new Json(n, JsonType.NUMBER);
++    }
++
++    /** Create a Json from a double */
++    public static Json of(double n) {
++        return new Json(n, JsonType.NUMBER);
++    }
++
++    /** Create a Json from a boolean */
++    public static Json of(boolean b) {
++        return new Json(b, JsonType.BOOLEAN);
++    }
++
++    /** Create the JSON null value */
++    public static Json ofNull() {
++        return new Json(null, JsonType.NULL);
++    }
++
++    /** Auto-boxing factory: wraps any Object into Json */
++    @SuppressWarnings("unchecked")
++    public static Json of(Object obj) {
++        if (obj == null) return ofNull();
++        if (obj instanceof Json j) return j;
++        if (obj instanceof String s) return of(s);
++        if (obj instanceof Integer n) return of(n.intValue());
++        if (obj instanceof Long n) return of(n.longValue());
++        if (obj instanceof Double n) return of(n.doubleValue());
++        if (obj instanceof Float n) return of(n.doubleValue());
++        if (obj instanceof Boolean b) return of(b.booleanValue());
++        if (obj instanceof Number n) return of(n.doubleValue());
++        if (obj instanceof Map<?,?> m) {
++            var map = new LinkedHashMap<String, Json>();
++            for (var e : m.entrySet()) {
++                map.put(String.valueOf(e.getKey()), of(e.getValue()));
++            }
++            return new Json(map, JsonType.OBJECT);
++        }
++        if (obj instanceof List<?> list) {
++            var arr = new ArrayList<Json>(list.size());
++            for (var item : list) {
++                arr.add(of(item));
++            }
++            return new Json(arr, JsonType.ARRAY);
++        }
++        if (obj instanceof Object[] array) {
++            var arr = new ArrayList<Json>(array.length);
++            for (var item : array) {
++                arr.add(of(item));
++            }
++            return new Json(arr, JsonType.ARRAY);
++        }
++        return of(obj.toString());
++    }
++
++    /**
++     * Create a JSON object from key-value pairs.
++     * Usage: Json.ofEntries("key1", val1, "key2", val2, ...)
++     * Values are auto-wrapped via Json.of() if not already Json.
++     */
++    public static Json ofEntries(Object... kvPairs) {
++        if (kvPairs.length % 2 != 0) {
++            throw new IllegalArgumentException("ofEntries requires even number of arguments (key-value pairs)");
++        }
++        var map = new LinkedHashMap<String, Json>();
++        for (int i = 0; i < kvPairs.length; i += 2) {
++            String key = String.valueOf(kvPairs[i]);
++            Object val = kvPairs[i + 1];
++            map.put(key, val instanceof Json j ? j : of(val));
++        }
++        return new Json(map, JsonType.OBJECT);
++    }
++
++    /** Create an empty JSON object */
++    public static Json ofObject() {
++        return new Json(new LinkedHashMap<String, Json>(), JsonType.OBJECT);
++    }
++
++    /** Create an empty JSON array */
++    public static Json ofArray() {
++        return new Json(new ArrayList<Json>(), JsonType.ARRAY);
++    }
++
++    /** Create a JSON array from a list of Json values */
++    public static Json ofArray(List<Json> elements) {
++        return new Json(new ArrayList<>(elements), JsonType.ARRAY);
++    }
++
++    /** Create a JSON array from varargs Json values (used by compiler desugaring) */
++    public static Json ofElements(Json... elements) {
++        ArrayList<Json> list = new ArrayList<>(elements.length);
++        for (Json j : elements) list.add(j);
++        return new Json(list, JsonType.ARRAY);
++    }
++
++    // ---- Parse from string ----
++
++    /** Parse a JSON string into a Json value */
++    public static Json parse(String jsonString) {
++        return new JsonParser(jsonString).parseValue();
++    }
++
++    // ---- Type query ----
++
++    public JsonType type() { return type; }
++    public boolean isObject() { return type == JsonType.OBJECT; }
++    public boolean isArray() { return type == JsonType.ARRAY; }
++    public boolean isString() { return type == JsonType.STRING; }
++    public boolean isNumber() { return type == JsonType.NUMBER; }
++    public boolean isBoolean() { return type == JsonType.BOOLEAN; }
++    public boolean isNull() { return type == JsonType.NULL; }
++
++    // ---- Object accessors ----
++
++    /** Get a value by key */
++    @SuppressWarnings("unchecked")
++    public Json get(String key) {
++        if (type != JsonType.OBJECT) return ofNull();
++        Json val = ((Map<String, Json>) value).get(key);
++        return val != null ? val : ofNull();
++    }
++
++    /** Put a value by key (Json) */
++    @SuppressWarnings("unchecked")
++    public Json put(String key, Json val) {
++        if (type != JsonType.OBJECT) throw new UnsupportedOperationException("Not a JSON object");
++        ((Map<String, Json>) value).put(key, val != null ? val : ofNull());
++        return this;
++    }
++
++    /** Put a value by key (auto-boxing) */
++    public Json put(String key, Object val) {
++        return put(key, val instanceof Json j ? j : of(val));
++    }
++
++    /** Check if a key exists */
++    @SuppressWarnings("unchecked")
++    public boolean has(String key) {
++        if (type != JsonType.OBJECT) return false;
++        return ((Map<String, Json>) value).containsKey(key);
++    }
++
++    /** Remove a key */
++    @SuppressWarnings("unchecked")
++    public Json remove(String key) {
++        if (type != JsonType.OBJECT) throw new UnsupportedOperationException("Not a JSON object");
++        ((Map<String, Json>) value).remove(key);
++        return this;
++    }
++
++    /** Get all keys */
++    @SuppressWarnings("unchecked")
++    public Set<String> keys() {
++        if (type != JsonType.OBJECT) return Set.of();
++        return Collections.unmodifiableSet(((Map<String, Json>) value).keySet());
++    }
++
++    /** Get number of entries (object) or elements (array) */
++    @SuppressWarnings("unchecked")
++    public int size() {
++        return switch (type) {
++            case OBJECT -> ((Map<String, Json>) value).size();
++            case ARRAY -> ((List<Json>) value).size();
++            default -> 0;
++        };
++    }
++
++    // ---- Array accessors ----
++
++    /** Get element by index */
++    @SuppressWarnings("unchecked")
++    public Json get(int index) {
++        if (type != JsonType.ARRAY) return ofNull();
++        List<Json> list = (List<Json>) value;
++        if (index < 0 || index >= list.size()) return ofNull();
++        return list.get(index);
++    }
++
++    /** Set element at index */
++    @SuppressWarnings("unchecked")
++    public Json set(int index, Json val) {
++        if (type != JsonType.ARRAY) throw new UnsupportedOperationException("Not a JSON array");
++        ((List<Json>) value).set(index, val != null ? val : ofNull());
++        return this;
++    }
++
++    /** Add element to array */
++    @SuppressWarnings("unchecked")
++    public Json add(Json val) {
++        if (type != JsonType.ARRAY) throw new UnsupportedOperationException("Not a JSON array");
++        ((List<Json>) value).add(val != null ? val : ofNull());
++        return this;
++    }
++
++    /** Add element to array (auto-boxing) */
++    public Json add(Object val) {
++        return add(val instanceof Json j ? j : of(val));
++    }
++
++    // ---- Type coercion ----
++
++    /** Convert to String */
++    public String asString() {
++        return switch (type) {
++            case STRING -> (String) value;
++            case NUMBER, BOOLEAN -> String.valueOf(value);
++            case NULL -> null;
++            default -> toString();
++        };
++    }
++
++    /** Convert to int */
++    public int asInt() {
++        return switch (type) {
++            case NUMBER -> ((Number) value).intValue();
++            case STRING -> Integer.parseInt((String) value);
++            case BOOLEAN -> ((Boolean) value) ? 1 : 0;
++            default -> 0;
++        };
++    }
++
++    /** Convert to long */
++    public long asLong() {
++        return switch (type) {
++            case NUMBER -> ((Number) value).longValue();
++            case STRING -> Long.parseLong((String) value);
++            case BOOLEAN -> ((Boolean) value) ? 1L : 0L;
++            default -> 0L;
++        };
++    }
++
++    /** Convert to double */
++    public double asDouble() {
++        return switch (type) {
++            case NUMBER -> ((Number) value).doubleValue();
++            case STRING -> Double.parseDouble((String) value);
++            case BOOLEAN -> ((Boolean) value) ? 1.0 : 0.0;
++            default -> 0.0;
++        };
++    }
++
++    /** Convert to boolean */
++    public boolean asBoolean() {
++        return switch (type) {
++            case BOOLEAN -> (Boolean) value;
++            case STRING -> Boolean.parseBoolean((String) value);
++            case NUMBER -> ((Number) value).doubleValue() != 0;
++            case NULL -> false;
++            default -> true;
++        };
++    }
++
++    /** Convert to Map */
++    @SuppressWarnings("unchecked")
++    public Map<String, Json> asMap() {
++        if (type != JsonType.OBJECT) return Map.of();
++        return Collections.unmodifiableMap((Map<String, Json>) value);
++    }
++
++    /** Convert to List */
++    @SuppressWarnings("unchecked")
++    public List<Json> asList() {
++        if (type != JsonType.ARRAY) return List.of();
++        return Collections.unmodifiableList((List<Json>) value);
++    }
++
++    // ---- Iterable (for arrays) ----
++
++    @Override
++    @SuppressWarnings("unchecked")
++    public Iterator<Json> iterator() {
++        if (type == JsonType.ARRAY) {
++            return ((List<Json>) value).iterator();
++        }
++        return Collections.emptyIterator();
++    }
++
++    // ---- Object overrides ----
++
++    @Override
++    @SuppressWarnings("unchecked")
++    public String toString() {
++        return switch (type) {
++            case OBJECT -> {
++                var sb = new StringBuilder("{");
++                var map = (Map<String, Json>) value;
++                boolean first = true;
++                for (var entry : map.entrySet()) {
++                    if (!first) sb.append(",");
++                    first = false;
++                    sb.append(escapeString(entry.getKey()));
++                    sb.append(":");
++                    sb.append(entry.getValue().toString());
++                }
++                sb.append("}");
++                yield sb.toString();
++            }
++            case ARRAY -> {
++                var sb = new StringBuilder("[");
++                var list = (List<Json>) value;
++                boolean first = true;
++                for (var item : list) {
++                    if (!first) sb.append(",");
++                    first = false;
++                    sb.append(item.toString());
++                }
++                sb.append("]");
++                yield sb.toString();
++            }
++            case STRING -> escapeString((String) value);
++            case NUMBER -> {
++                if (value instanceof Double d) {
++                    if (d == Math.floor(d) && !Double.isInfinite(d)) {
++                        yield String.valueOf(d.longValue());
++                    }
++                }
++                yield String.valueOf(value);
++            }
++            case BOOLEAN -> String.valueOf(value);
++            case NULL -> "null";
++        };
++    }
++
++    private static String escapeString(String s) {
++        var sb = new StringBuilder("\"");
++        for (int i = 0; i < s.length(); i++) {
++            char c = s.charAt(i);
++            switch (c) {
++                case '"' -> sb.append("\\\"");
++                case '\\' -> sb.append("\\\\");
++                case '\b' -> sb.append("\\b");
++                case '\f' -> sb.append("\\f");
++                case '\n' -> sb.append("\\n");
++                case '\r' -> sb.append("\\r");
++                case '\t' -> sb.append("\\t");
++                default -> {
++                    if (c < 0x20) {
++                        sb.append(String.format("\\u%04x", (int) c));
++                    } else {
++                        sb.append(c);
++                    }
++                }
++            }
++        }
++        sb.append("\"");
++        return sb.toString();
++    }
++
++    @Override
++    public boolean equals(Object o) {
++        if (this == o) return true;
++        if (!(o instanceof Json other)) return false;
++        if (type != other.type) return false;
++        return Objects.equals(value, other.value);
++    }
++
++    @Override
++    public int hashCode() {
++        return Objects.hash(type, value);
++    }
++
++    // ---- Internal JSON Parser ----
++
++    private static class JsonParser {
++        private final String input;
++        private int pos;
++
++        JsonParser(String input) {
++            this.input = input;
++            this.pos = 0;
++        }
++
++        Json parseValue() {
++            skipWhitespace();
++            if (pos >= input.length()) return Json.ofNull();
++            char c = input.charAt(pos);
++            return switch (c) {
++                case '{' -> parseObject();
++                case '[' -> parseArray();
++                case '"' -> parseString();
++                case 't', 'f' -> parseBoolean();
++                case 'n' -> parseNull();
++                default -> parseNumber();
++            };
++        }
++
++        private Json parseObject() {
++            pos++; // skip {
++            skipWhitespace();
++            var map = new LinkedHashMap<String, Json>();
++            if (pos < input.length() && input.charAt(pos) == '}') {
++                pos++;
++                return new Json(map, JsonType.OBJECT);
++            }
++            while (pos < input.length()) {
++                skipWhitespace();
++                String key = parseRawString();
++                skipWhitespace();
++                expect(':');
++                Json val = parseValue();
++                map.put(key, val);
++                skipWhitespace();
++                if (pos < input.length() && input.charAt(pos) == ',') {
++                    pos++;
++                } else {
++                    break;
++                }
++            }
++            skipWhitespace();
++            expect('}');
++            return new Json(map, JsonType.OBJECT);
++        }
++
++        private Json parseArray() {
++            pos++; // skip [
++            skipWhitespace();
++            var list = new ArrayList<Json>();
++            if (pos < input.length() && input.charAt(pos) == ']') {
++                pos++;
++                return new Json(list, JsonType.ARRAY);
++            }
++            while (pos < input.length()) {
++                list.add(parseValue());
++                skipWhitespace();
++                if (pos < input.length() && input.charAt(pos) == ',') {
++                    pos++;
++                } else {
++                    break;
++                }
++            }
++            skipWhitespace();
++            expect(']');
++            return new Json(list, JsonType.ARRAY);
++        }
++
++        private Json parseString() {
++            return Json.of(parseRawString());
++        }
++
++        private String parseRawString() {
++            expect('"');
++            var sb = new StringBuilder();
++            while (pos < input.length()) {
++                char c = input.charAt(pos++);
++                if (c == '"') return sb.toString();
++                if (c == '\\') {
++                    if (pos >= input.length()) break;
++                    char esc = input.charAt(pos++);
++                    switch (esc) {
++                        case '"' -> sb.append('"');
++                        case '\\' -> sb.append('\\');
++                        case '/' -> sb.append('/');
++                        case 'b' -> sb.append('\b');
++                        case 'f' -> sb.append('\f');
++                        case 'n' -> sb.append('\n');
++                        case 'r' -> sb.append('\r');
++                        case 't' -> sb.append('\t');
++                        case 'u' -> {
++                            if (pos + 4 <= input.length()) {
++                                sb.append((char) Integer.parseInt(input.substring(pos, pos + 4), 16));
++                                pos += 4;
++                            }
++                        }
++                        default -> sb.append(esc);
++                    }
++                } else {
++                    sb.append(c);
++                }
++            }
++            return sb.toString();
++        }
++
++        private Json parseNumber() {
++            int start = pos;
++            if (pos < input.length() && input.charAt(pos) == '-') pos++;
++            while (pos < input.length() && Character.isDigit(input.charAt(pos))) pos++;
++            boolean isFloat = false;
++            if (pos < input.length() && input.charAt(pos) == '.') {
++                isFloat = true;
++                pos++;
++                while (pos < input.length() && Character.isDigit(input.charAt(pos))) pos++;
++            }
++            if (pos < input.length() && (input.charAt(pos) == 'e' || input.charAt(pos) == 'E')) {
++                isFloat = true;
++                pos++;
++                if (pos < input.length() && (input.charAt(pos) == '+' || input.charAt(pos) == '-')) pos++;
++                while (pos < input.length() && Character.isDigit(input.charAt(pos))) pos++;
++            }
++            String numStr = input.substring(start, pos);
++            if (isFloat) {
++                return new Json(Double.parseDouble(numStr), JsonType.NUMBER);
++            } else {
++                long val = Long.parseLong(numStr);
++                if (val >= Integer.MIN_VALUE && val <= Integer.MAX_VALUE) {
++                    return new Json((int) val, JsonType.NUMBER);
++                }
++                return new Json(val, JsonType.NUMBER);
++            }
++        }
++
++        private Json parseBoolean() {
++            if (input.startsWith("true", pos)) {
++                pos += 4;
++                return Json.of(true);
++            } else if (input.startsWith("false", pos)) {
++                pos += 5;
++                return Json.of(false);
++            }
++            throw new IllegalArgumentException("Invalid JSON at position " + pos);
++        }
++
++        private Json parseNull() {
++            if (input.startsWith("null", pos)) {
++                pos += 4;
++                return Json.ofNull();
++            }
++            throw new IllegalArgumentException("Invalid JSON at position " + pos);
++        }
++
++        private void skipWhitespace() {
++            while (pos < input.length() && Character.isWhitespace(input.charAt(pos))) pos++;
++        }
++
++        private void expect(char c) {
++            if (pos >= input.length() || input.charAt(pos) != c) {
++                throw new IllegalArgumentException("Expected '" + c + "' at position " + pos);
++            }
++            pos++;
++        }
++    }
++}
+diff --git a/src/java.json/share/classes/java/json/JsonType.java b/src/java.json/share/classes/java/json/JsonType.java
+new file mode 100644
+index 000000000..d4dc38654
+--- /dev/null
++++ b/src/java.json/share/classes/java/json/JsonType.java
+@@ -0,0 +1,14 @@
++package java.json;
++
++/**
++ * The type of a JSON value.
++ * @since 25
++ */
++public enum JsonType {
++    OBJECT,
++    ARRAY,
++    STRING,
++    NUMBER,
++    BOOLEAN,
++    NULL
++}
+diff --git a/src/java.json/share/classes/module-info.java b/src/java.json/share/classes/module-info.java
+new file mode 100644
+index 000000000..6893397df
+--- /dev/null
++++ b/src/java.json/share/classes/module-info.java
+@@ -0,0 +1,8 @@
++/**
++ * Defines the native JSON API for the Java platform.
++ *
++ * @since 25
++ */
++module java.json {
++    exports java.json;
++}
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Flags.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Flags.java
+index 26f0d338a..d885fc207 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Flags.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Flags.java
+@@ -318,6 +318,11 @@ public static EnumSet<Flag> asFlagSet(long flags) {
+      */
+     public static final long NAME_FILLED = 1L<<52; //ParamSymbols only
+ 
++    /**
++     * JavaSuper: Flag to indicate the given method is an async method.
++     */
++    public static final long ASYNC = 1L<<52; //MethodSymbols only
++
+     /**
+      * Flag to indicate the given ModuleSymbol is a system module.
+      */
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Source.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Source.java
+index b0b82fa57..befc059cd 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Source.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Source.java
+@@ -271,6 +271,13 @@ public enum Feature {
+         JAVA_BASE_TRANSITIVE(JDK25, Fragments.FeatureJavaBaseTransitive, DiagKind.PLURAL),
+         PRIVATE_MEMBERS_IN_PERMITS_CLAUSE(JDK19),
+         ERASE_POLY_SIG_RETURN_TYPE(JDK24),
++        // JavaSuper features
++        AUTO_RETURN_DEFAULT(JDK25),
++        JSON_LITERALS(JDK25),
++        STRUCTURAL_COPY(JDK25),
++        MATCH_EXPRESSION(JDK25),
++        NULL_SAFETY(JDK25),
++        ASYNC_AWAIT(JDK25),
+         ;
+ 
+         enum DiagKind {
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symbol.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symbol.java
+index e5eac0786..6c825291b 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symbol.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symbol.java
+@@ -1978,6 +1978,9 @@ public static class MethodSymbol extends Symbol implements ExecutableElement {
+          */
+         public Attribute defaultValue = null;
+ 
++        /** For async methods, the original declared return type before wrapping in Future<T>. */
++        public Type originalAsyncReturnType = null;
++
+         /** Construct a method symbol, given its flags, name, type and owner.
+          */
+         public MethodSymbol(long flags, Name name, Type type, Symbol owner) {
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symtab.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symtab.java
+index 762932fe9..f8302e360 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symtab.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/code/Symtab.java
+@@ -167,6 +167,11 @@ public static Symtab instance(Context context) {
+     public final Type classType;
+     public final Type classLoaderType;
+     public final Type stringType;
++    // JavaSuper types
++    public Type jsonType;
++    public final Type futureType;
++    public final Type completableFutureType;
++    public final Type executorsType;
+     public final Type stringBufferType;
+     public final Type stringBuilderType;
+     public final Type cloneableType;
+@@ -547,6 +552,12 @@ public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+         objectsType = enterClass("java.util.Objects");
+         classType = enterClass("java.lang.Class");
+         stringType = enterClass("java.lang.String");
++        // JavaSuper: jsonType is NOT pre-registered because it's in java.json module, not java.base.
++        // It gets resolved on-demand in Attr/Lower when user code imports java.json.Json.
++        jsonType = null;
++        futureType = enterClass("java.util.concurrent.Future");
++        completableFutureType = enterClass("java.util.concurrent.CompletableFuture");
++        executorsType = enterClass("java.util.concurrent.Executors");
+         stringBufferType = enterClass("java.lang.StringBuffer");
+         stringBuilderType = enterClass("java.lang.StringBuilder");
+         cloneableType = enterClass("java.lang.Cloneable");
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Attr.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Attr.java
+index bc9efa30d..afb925645 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Attr.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Attr.java
+@@ -1910,6 +1910,10 @@ private void handleSwitch(JCTree switchTree,
+                 ((JCSwitchExpression) switchTree).hasUnconditionalPattern =
+                         hasDefault || hasUnconditionalPattern || lastPatternErroneous;
+                 ((JCSwitchExpression) switchTree).patternSwitch = patternSwitch;
++            } else if (switchTree.hasTag(MATCH_EXPR)) {
++                ((JCTree.JCMatchExpression) switchTree).hasUnconditionalPattern =
++                        hasDefault || hasUnconditionalPattern || lastPatternErroneous;
++                ((JCTree.JCMatchExpression) switchTree).patternSwitch = patternSwitch;
+             } else {
+                 Assert.error(switchTree.getTag().name());
+             }
+@@ -2461,6 +2465,7 @@ private Pair<JCTree, JCDiagnostic.Error> findJumpTargetNoError(JCTree.Tag tag,
+                         if (label == null && tag == BREAK) return Pair.of(env1.tree, null);
+                         break;
+                     case SWITCH_EXPRESSION:
++                    case MATCH_EXPR:
+                         if (tag == YIELD) {
+                             return Pair.of(env1.tree, null);
+                         } else if (tag == BREAK) {
+@@ -4316,6 +4321,13 @@ public void visitRecordPattern(JCRecordPattern tree) {
+     public void visitIndexed(JCArrayAccess tree) {
+         Type owntype = types.createErrorType(tree.type);
+         Type atype = attribExpr(tree.indexed, env);
++        // JavaSuper: Json bracket access allows String or int index
++        if (isJsonType(atype)) {
++            attribExpr(tree.index, env); // allow any index type
++            owntype = atype; // Use the actual Json type
++            result = check(tree, owntype, KindSelector.VAR, resultInfo);
++            return;
++        }
+         attribExpr(tree.index, env, syms.intType);
+         if (types.isArray(atype))
+             owntype = types.elemtype(atype);
+@@ -4434,6 +4446,17 @@ public void visitSelect(JCFieldAccess tree) {
+         // Determine the symbol represented by the selection.
+         env.info.pendingResolutionPhase = null;
+         Symbol sym = selectSym(tree, sitesym, site, env, resultInfo);
++
++        // JavaSuper: If site is Json and member not found, treat as dynamic property access
++        if ((sym.kind == ERR || sym.kind.isResolutionError()) && isJsonType(site)) {
++            // Dynamic property access on Json — will be desugared to .get("name") in Lower
++            tree.sym = sym;
++            tree.type = site; // Use the actual Json type from the site
++            env.info.selectSuper = selectSuperPrev;
++            result = tree.type;
++            return;
++        }
++
+         if (sym.kind == VAR && sym.name != names._super && env.info.defaultSuperCallSite != null) {
+             log.error(tree.selected.pos(), Errors.NotEnclClass(site.tsym));
+             sym = syms.errSymbol;
+@@ -4556,6 +4579,11 @@ private Symbol selectSym(JCFieldAccess tree,
+                 } else {
+                     // We are seeing a plain identifier as selector.
+                     Symbol sym = rs.findIdentInType(pos, env, site, name, resultInfo.pkind);
++                    // JavaSuper: If site is Json and member not found, return a special
++                    // symbol indicating dynamic property access (skip accessBase error reporting)
++                    if ((sym.kind == ERR || sym.kind.isResolutionError()) && isJsonType(site)) {
++                        return sym;
++                    }
+                         sym = rs.accessBase(sym, pos, location, site, name, true);
+                     return sym;
+                 }
+@@ -5260,6 +5288,209 @@ public void visitAnnotatedType(JCAnnotatedType tree) {
+         result = tree.type = annotatedType;
+     }
+ 
++    // ---- JavaSuper: Attribution visitors for new AST nodes ----
++
++    /** Attribute a JSON object literal { key: value, ... } */
++    public void visitJsonObject(JCJsonObjectLiteral tree) {
++        for (JCTree.JCJsonEntry entry : tree.entries) {
++            attribExpr(entry.value, env);
++        }
++        Type jsonType = resolveJsonType(env);
++        result = check(tree, jsonType, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute a JSON entry (key: value) — handled within visitJsonObject */
++    public void visitJsonEntry(JCTree.JCJsonEntry tree) {
++        attribExpr(tree.value, env);
++        result = tree.value.type;
++    }
++
++    /** Attribute a JSON array literal [ value, ... ] */
++    public void visitJsonArray(JCJsonArrayLiteral tree) {
++        for (JCExpression elem : tree.elements) {
++            attribExpr(elem, env);
++        }
++        Type jsonType = resolveJsonType(env);
++        result = check(tree, jsonType, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute a copy expression: copy source */
++    public void visitCopyExpr(JCCopyExpr tree) {
++        Type sourceType = attribExpr(tree.source, env);
++        // Use the context type (assignment target) if available, otherwise source type
++        Type targetType = resultInfo.pt;
++        if (targetType == null || targetType.hasTag(NONE) || targetType.hasTag(ERROR)) {
++            targetType = sourceType;
++        }
++        // Populate matchedFields: find fields with matching name + assignable type
++        ListBuffer<com.sun.tools.javac.util.Pair<Symbol, Symbol>> matched = new ListBuffer<>();
++        if (targetType.tsym != null && sourceType.tsym != null) {
++            for (Symbol targetMember : targetType.tsym.members().getSymbols()) {
++                if (targetMember.kind == VAR && !targetMember.isStatic()) {
++                    for (Symbol sourceMember : sourceType.tsym.members().getSymbols()) {
++                        if (sourceMember.kind == VAR && !sourceMember.isStatic() &&
++                                sourceMember.name.equals(targetMember.name) &&
++                                types.isAssignable(sourceMember.type, targetMember.type)) {
++                            matched.append(new com.sun.tools.javac.util.Pair<>(targetMember, sourceMember));
++                            break;
++                        }
++                    }
++                }
++            }
++        }
++        tree.matchedFields = matched.toList();
++        result = check(tree, targetType, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute a match expression: match (selector) { case ... } — delegates to switch infrastructure */
++    public void visitMatchExpr(JCMatchExpression tree) {
++        ListBuffer<DiagnosticPosition> caseTypePositions = new ListBuffer<>();
++        ListBuffer<Type> caseTypes = new ListBuffer<>();
++
++        handleSwitch(tree, tree.selector, tree.cases, (c, caseEnv) -> {
++            caseEnv.info.yieldResult = unknownExprInfo;
++            attribStats(c.stats, caseEnv);
++            new TreeScanner() {
++                @Override
++                public void visitYield(JCYield brk) {
++                    if (brk.target == tree) {
++                        caseTypePositions.append(brk.value != null ? brk.value.pos() : brk.pos());
++                        caseTypes.append(brk.value != null ? brk.value.type : syms.errType);
++                    }
++                    super.visitYield(brk);
++                }
++                @Override public void visitClassDef(JCClassDecl tree) {}
++                @Override public void visitLambda(JCLambda tree) {}
++            }.scan(c.stats);
++        });
++
++        Type owntype = caseTypes.isEmpty() ? syms.errType
++                : condType(caseTypePositions.toList(), caseTypes.toList());
++        result = check(tree, owntype, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute null-safe member access: expr?.name */
++    public void visitNullSafeSelect(JCNullSafeSelect tree) {
++        Type site = attribExpr(tree.selected, env);
++        // If site is Json, treat as dynamic access → result is Json
++        if (isJsonType(site)) {
++            result = check(tree, site, KindSelector.VAL, resultInfo);
++            return;
++        }
++        // Otherwise resolve member on the type, like a normal select
++        // Try VAL first (field access), fall back to VAL_MTH for method chaining (a?.method())
++        Symbol sym = rs.findIdentInType(tree.pos(), env, site, tree.name, KindSelector.VAL_MTH);
++        tree.sym = sym;
++        Type owntype;
++        if (sym.kind == ERR || sym.kind.isResolutionError()) {
++            owntype = types.createErrorType(tree.name, site.tsym, site);
++        } else if (sym.kind == Kind.MTH) {
++            // For method symbols, use the method type — visitApply will handle invocation
++            owntype = sym.type;
++            result = check(tree, owntype, KindSelector.VAL_MTH, resultInfo);
++            return;
++        } else {
++            owntype = sym.type;
++            // Box primitive results since null-safe can return null
++            if (owntype != null && owntype.isPrimitive()) {
++                owntype = types.boxedClass(owntype).type;
++            }
++        }
++        if (owntype == null) {
++            owntype = types.createErrorType(tree.name, site.tsym, site);
++        }
++        result = check(tree, owntype, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute null-safe index access: expr?[index] */
++    public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++        Type atype = attribExpr(tree.indexed, env);
++        attribExpr(tree.index, env);
++        Type owntype;
++        if (isJsonType(atype)) {
++            owntype = atype; // Use actual Json type
++        } else if (types.isArray(atype)) {
++            owntype = types.boxedClass(types.elemtype(atype)).type;
++        } else {
++            owntype = types.createErrorType(atype);
++        }
++        result = check(tree, owntype, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute null coalescing: expr ?? expr */
++    public void visitNullCoalesce(JCNullCoalesce tree) {
++        Type lhsType = attribExpr(tree.lhs, env);
++        Type rhsType = attribExpr(tree.rhs, env);
++        // Result type is LUB of both sides
++        Type owntype = condType(List.of(tree.lhs.pos(), tree.rhs.pos()),
++                                List.of(lhsType, rhsType));
++        result = check(tree, owntype, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute await expression: await expr */
++    public void visitAwait(JCAwait tree) {
++        Type exprType = attribExpr(tree.expr, env);
++        // Result type is the type parameter of Future<T>
++        Type owntype = extractFutureTypeArg(exprType);
++        result = check(tree, owntype, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute await-all: await (expr, expr, ...) */
++    public void visitAwaitAll(JCAwaitAll tree) {
++        for (JCExpression expr : tree.exprs) {
++            attribExpr(expr, env);
++        }
++        // Result type: for simplicity, use Object for heterogeneous await-all
++        result = check(tree, syms.objectType, KindSelector.VAL, resultInfo);
++    }
++
++    /** Attribute await-any: await any(expr, expr, ...) */
++    public void visitAwaitAny(JCAwaitAny tree) {
++        Type commonType = null;
++        for (JCExpression expr : tree.exprs) {
++            Type t = attribExpr(expr, env);
++            Type unwrapped = extractFutureTypeArg(t);
++            commonType = (commonType == null) ? unwrapped
++                    : types.lub(commonType, unwrapped);
++        }
++        if (commonType == null) commonType = syms.objectType;
++        result = check(tree, commonType, KindSelector.VAL, resultInfo);
++    }
++
++    /** Check if a type is the java.json.Json type. Uses name comparison for module-safety. */
++    private boolean isJsonType(Type t) {
++        if (t == null || t.tsym == null) return false;
++        return t.tsym.flatName().toString().equals("java.json.Json");
++    }
++
++    /** Resolve the real java.json.Json type from the compilation environment.
++     *  Caches the result in syms.jsonType for later use.
++     *  Returns null if the type is not available (e.g., during bootstrap).
++     */
++    private Type resolveJsonType(Env<AttrContext> env) {
++        if (syms.jsonType != null) return syms.jsonType;
++        try {
++            // Look up java.json module and enter Json class there
++            ModuleSymbol jsonModule = syms.enterModule(names.fromString("java.json"));
++            ClassSymbol cs = syms.enterClass(jsonModule, names.fromString("java.json.Json"));
++            if (cs != null && cs.type != null) {
++                syms.jsonType = cs.type;
++                return cs.type;
++            }
++        } catch (Exception e) { /* ignore during bootstrap */ }
++        return null;
++    }
++
++    /** Extract T from Future<T>. Returns Object if not a Future type. */
++    private Type extractFutureTypeArg(Type t) {
++        Type futureBase = types.asSuper(t, syms.futureType.tsym);
++        if (futureBase != null && futureBase.getTypeArguments().nonEmpty()) {
++            return futureBase.getTypeArguments().head;
++        }
++        // If not a parameterized Future, just return Object
++        return syms.objectType;
++    }
++
+     public void visitErroneous(JCErroneous tree) {
+         if (tree.errs != null) {
+             WriteableScope newScope = env.info.scope;
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Flow.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Flow.java
+index e685f139b..0f9a7bbb4 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Flow.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Flow.java
+@@ -613,8 +613,10 @@ public void visitMethodDef(JCMethodDecl tree) {
+                 scanStat(tree.body);
+                 tree.completesNormally = alive != Liveness.DEAD;
+ 
+-                if (alive == Liveness.ALIVE && !tree.sym.type.getReturnType().hasTag(VOID))
+-                    log.error(TreeInfo.diagEndPos(tree.body), Errors.MissingRetStmt);
++                if (alive == Liveness.ALIVE && !tree.sym.type.getReturnType().hasTag(VOID)) {
++                    // JavaSuper: Auto-return default value — suppress missing return error.
++                    // Gen.java will emit appropriate default return bytecode.
++                }
+ 
+                 clearPendingExits(true);
+             } finally {
+@@ -1324,6 +1326,68 @@ public void visitModuleDef(JCModuleDecl tree) {
+             // Do nothing for modules
+         }
+ 
++        public void visitJsonObject(JCJsonObjectLiteral tree) {
++            for (JCJsonEntry entry : tree.entries) {
++                scan(entry.value);
++            }
++        }
++
++        public void visitJsonEntry(JCJsonEntry tree) {
++            scan(tree.value);
++        }
++
++        public void visitJsonArray(JCJsonArrayLiteral tree) {
++            scan(tree.elements);
++        }
++
++        public void visitCopyExpr(JCCopyExpr tree) {
++            scan(tree.source);
++        }
++
++        public void visitMatchExpr(JCMatchExpression tree) {
++            // Handle liveness like a switch expression
++            ListBuffer<PendingExit> prevPendingExits = pendingExits;
++            pendingExits = new ListBuffer<>();
++            scan(tree.selector);
++            Liveness prevAlive = alive;
++            for (List<JCCase> l = tree.cases; l.nonEmpty(); l = l.tail) {
++                alive = Liveness.ALIVE;
++                JCCase c = l.head;
++                for (JCCaseLabel pat : c.labels) {
++                    scan(pat);
++                }
++                scanStats(c.stats);
++            }
++            alive = prevAlive;
++            alive = alive.or(resolveYields(tree, prevPendingExits));
++        }
++
++        public void visitNullSafeSelect(JCNullSafeSelect tree) {
++            scan(tree.selected);
++        }
++
++        public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++            scan(tree.indexed);
++            scan(tree.index);
++        }
++
++        public void visitNullCoalesce(JCNullCoalesce tree) {
++            scan(tree.lhs);
++            scan(tree.rhs);
++        }
++
++        public void visitAwait(JCAwait tree) {
++            scan(tree.expr);
++        }
++
++        public void visitAwaitAll(JCAwaitAll tree) {
++            scan(tree.exprs);
++        }
++
++        public void visitAwaitAny(JCAwaitAny tree) {
++            scan(tree.exprs);
++        }
++
+     /* ************************************************************************
+      * main method
+      *************************************************************************/
+@@ -1640,7 +1704,7 @@ private void handleSwitch(JCTree tree, JCExpression selector, List<JCCase> cases
+                 scan(c.labels);
+                 scan(c.stats);
+             }
+-            if (tree.hasTag(SWITCH_EXPRESSION)) {
++            if (tree.hasTag(SWITCH_EXPRESSION) || tree.hasTag(MATCH_EXPR)) {
+                 resolveYields(tree, prevPendingExits);
+             } else {
+                 resolveBreaks(tree, prevPendingExits);
+@@ -1908,6 +1972,54 @@ public void visitModuleDef(JCModuleDecl tree) {
+             // Do nothing for modules
+         }
+ 
++        public void visitJsonObject(JCJsonObjectLiteral tree) {
++            for (JCJsonEntry entry : tree.entries) {
++                scan(entry.value);
++            }
++        }
++
++        public void visitJsonEntry(JCJsonEntry tree) {
++            scan(tree.value);
++        }
++
++        public void visitJsonArray(JCJsonArrayLiteral tree) {
++            scan(tree.elements);
++        }
++
++        public void visitCopyExpr(JCCopyExpr tree) {
++            scan(tree.source);
++        }
++
++        public void visitMatchExpr(JCMatchExpression tree) {
++            handleSwitch(tree, tree.selector, tree.cases);
++        }
++
++        public void visitNullSafeSelect(JCNullSafeSelect tree) {
++            scan(tree.selected);
++        }
++
++        public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++            scan(tree.indexed);
++            scan(tree.index);
++        }
++
++        public void visitNullCoalesce(JCNullCoalesce tree) {
++            scan(tree.lhs);
++            scan(tree.rhs);
++        }
++
++        public void visitAwait(JCAwait tree) {
++            scan(tree.expr);
++        }
++
++        public void visitAwaitAll(JCAwaitAll tree) {
++            scan(tree.exprs);
++        }
++
++        public void visitAwaitAny(JCAwaitAny tree) {
++            scan(tree.exprs);
++        }
++
+     /* ************************************************************************
+      * main method
+      *************************************************************************/
+@@ -2799,14 +2911,14 @@ private void handleSwitch(JCTree tree, JCExpression selector,
+                 // Warn about fall-through if lint switch fallthrough enabled.
+             }
+             if (!isExhaustive) {
+-                if (tree.hasTag(SWITCH_EXPRESSION)) {
++                if (tree.hasTag(SWITCH_EXPRESSION) || tree.hasTag(MATCH_EXPR)) {
+                     markDead();
+                 } else if (tree.hasTag(SWITCH) && !TreeInfo.expectedExhaustive((JCSwitch) tree)) {
+                     inits.assign(initsSwitch);
+                     uninits.assign(uninits.andSet(uninitsSwitch));
+                 }
+             }
+-            if (tree.hasTag(SWITCH_EXPRESSION)) {
++            if (tree.hasTag(SWITCH_EXPRESSION) || tree.hasTag(MATCH_EXPR)) {
+                 resolveYields(tree, prevPendingExits);
+             } else {
+                 resolveBreaks(tree, prevPendingExits);
+@@ -2979,8 +3091,8 @@ public void visitBreak(JCBreak tree) {
+ 
+         @Override
+         public void visitYield(JCYield tree) {
+-            JCSwitchExpression expr = (JCSwitchExpression) tree.target;
+-            if (expr != null && expr.type.hasTag(BOOLEAN)) {
++            JCExpression expr = (JCExpression) tree.target;
++            if (expr != null && expr.type != null && expr.type.hasTag(BOOLEAN)) {
+                 scanCond(tree.value);
+                 Bits initsAfterBreakWhenTrue = new Bits(initsWhenTrue);
+                 Bits initsAfterBreakWhenFalse = new Bits(initsWhenFalse);
+@@ -3217,6 +3329,54 @@ public void visitModuleDef(JCModuleDecl tree) {
+             // Do nothing for modules
+         }
+ 
++        public void visitJsonObject(JCJsonObjectLiteral tree) {
++            for (JCJsonEntry entry : tree.entries) {
++                scanExpr(entry.value);
++            }
++        }
++
++        public void visitJsonEntry(JCJsonEntry tree) {
++            scanExpr(tree.value);
++        }
++
++        public void visitJsonArray(JCJsonArrayLiteral tree) {
++            scanExprs(tree.elements);
++        }
++
++        public void visitCopyExpr(JCCopyExpr tree) {
++            scanExpr(tree.source);
++        }
++
++        public void visitMatchExpr(JCMatchExpression tree) {
++            handleSwitch(tree, tree.selector, tree.cases, tree.hasUnconditionalPattern);
++        }
++
++        public void visitNullSafeSelect(JCNullSafeSelect tree) {
++            scanExpr(tree.selected);
++        }
++
++        public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++            scanExpr(tree.indexed);
++            scanExpr(tree.index);
++        }
++
++        public void visitNullCoalesce(JCNullCoalesce tree) {
++            scanExpr(tree.lhs);
++            scanExpr(tree.rhs);
++        }
++
++        public void visitAwait(JCAwait tree) {
++            scanExpr(tree.expr);
++        }
++
++        public void visitAwaitAll(JCAwaitAll tree) {
++            scanExprs(tree.exprs);
++        }
++
++        public void visitAwaitAny(JCAwaitAny tree) {
++            scanExprs(tree.exprs);
++        }
++
+     /* ************************************************************************
+      * main method
+      *************************************************************************/
+@@ -3453,6 +3613,55 @@ public void visitModuleDef(JCModuleDecl tree) {
+             // Do nothing for modules
+         }
+ 
++        public void visitJsonObject(JCJsonObjectLiteral tree) {
++            for (JCJsonEntry entry : tree.entries) {
++                scan(entry.value);
++            }
++        }
++
++        public void visitJsonEntry(JCJsonEntry tree) {
++            scan(tree.value);
++        }
++
++        public void visitJsonArray(JCJsonArrayLiteral tree) {
++            scan(tree.elements);
++        }
++
++        public void visitCopyExpr(JCCopyExpr tree) {
++            scan(tree.source);
++        }
++
++        public void visitMatchExpr(JCMatchExpression tree) {
++            scan(tree.selector);
++            scan(tree.cases);
++        }
++
++        public void visitNullSafeSelect(JCNullSafeSelect tree) {
++            scan(tree.selected);
++        }
++
++        public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++            scan(tree.indexed);
++            scan(tree.index);
++        }
++
++        public void visitNullCoalesce(JCNullCoalesce tree) {
++            scan(tree.lhs);
++            scan(tree.rhs);
++        }
++
++        public void visitAwait(JCAwait tree) {
++            scan(tree.expr);
++        }
++
++        public void visitAwaitAll(JCAwaitAll tree) {
++            scan(tree.exprs);
++        }
++
++        public void visitAwaitAny(JCAwaitAny tree) {
++            scan(tree.exprs);
++        }
++
+     /* ************************************************************************
+      * main method
+      *************************************************************************/
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Lower.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Lower.java
+index a544b3948..cdf1af478 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Lower.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/Lower.java
+@@ -2628,6 +2628,39 @@ JCFieldAccess makeIndyQualifier(
+     }
+ 
+     public void visitMethodDef(JCMethodDecl tree) {
++        // JavaSuper: async method desugaring
++        // Transform return statements: `return expr;` → `return CompletableFuture.completedFuture(expr);`
++        if ((tree.sym.flags() & Flags.ASYNC) != 0) {
++            make_at(tree.pos());
++            // Clear the ASYNC flag to avoid confusing downstream
++            tree.sym.flags_field &= ~Flags.ASYNC;
++            tree.mods.flags &= ~Flags.ASYNC;
++
++            // Get the original return type (before Future<T> wrapping)
++            Type origReturnType = tree.sym.originalAsyncReturnType;
++            if (origReturnType == null) {
++                origReturnType = syms.objectType;
++            }
++
++            // Transform all return statements in the body to wrap in CompletableFuture.completedFuture()
++            final Type origRetType = origReturnType;
++            new com.sun.tools.javac.tree.TreeTranslator() {
++                @Override
++                public void visitReturn(JCReturn ret) {
++                    super.visitReturn(ret);
++                    if (ret.expr != null) {
++                        make_at(ret.pos());
++                        JCExpression wrapped = wrapInCompletedFuture(ret.expr, origRetType);
++                        ret.expr = wrapped;
++                    }
++                }
++                // Don't descend into lambdas or inner classes
++                @Override
++                public void visitLambda(JCLambda tree) { }
++                @Override
++                public void visitClassDef(JCClassDecl tree) { }
++            }.translate(tree.body);
++        }
+         if (tree.name == names.init && (currentClass.flags_field&ENUM) != 0) {
+             // Add "String $enum$name, int $enum$ordinal" to the beginning of the
+             // argument list for each constructor of an enum.
+@@ -3329,11 +3362,88 @@ public void visitParens(JCParens tree) {
+ 
+     public void visitIndexed(JCArrayAccess tree) {
+         tree.indexed = translate(tree.indexed);
++        // JavaSuper: Json bracket access — desugar x["key"] to x.get("key")
++        if (tree.indexed.type != null &&
++                isJsonType(tree.indexed.type)) {
++            make_at(tree.pos());
++            tree.index = translate(tree.index);
++            result = jsonInstanceCall(tree.indexed, names.get, List.of(tree.index));
++            return;
++        }
+         tree.index = translate(tree.index, syms.intType);
+         result = tree;
+     }
+ 
+     public void visitAssign(JCAssign tree) {
++        // JavaSuper: Handle copy expression: target = copy source
++        if (tree.rhs instanceof JCCopyExpr copyExpr) {
++            make_at(tree.pos());
++            JCExpression target = translate(tree.lhs);
++            JCExpression source = translate(copyExpr.source);
++            Type targetType = target.type;
++
++            // Create temp vars for target and source to avoid re-evaluation
++            VarSymbol targetTmpSym = new VarSymbol(FINAL | SYNTHETIC,
++                    names.fromString("$cpytgt" + tree.hashCode()),
++                    targetType, currentMethodSym);
++            JCVariableDecl targetTmpDef = make.VarDef(targetTmpSym, target);
++
++            VarSymbol sourceTmpSym = new VarSymbol(FINAL | SYNTHETIC,
++                    names.fromString("$cpysrc" + tree.hashCode()),
++                    source.type, currentMethodSym);
++            JCVariableDecl sourceTmpDef = make.VarDef(sourceTmpSym, source);
++
++            // Generate field-by-field assignments
++            ListBuffer<JCStatement> stmts = new ListBuffer<>();
++            stmts.append(targetTmpDef);
++            stmts.append(sourceTmpDef);
++
++            if (copyExpr.matchedFields != null) {
++                for (com.sun.tools.javac.util.Pair<Symbol, Symbol> pair : copyExpr.matchedFields) {
++                    Symbol targetField = pair.fst;
++                    Symbol sourceField = pair.snd;
++                    JCExpression lhs = make.Select(make.Ident(targetTmpSym), targetField);
++                    lhs.type = targetField.type;
++                    JCExpression rhs = make.Select(make.Ident(sourceTmpSym), sourceField);
++                    rhs.type = sourceField.type;
++                    JCAssign assign = make.Assign(lhs, rhs);
++                    assign.type = targetField.type;
++                    stmts.append(make.Exec(assign));
++                }
++            }
++
++            // Return target reference as the result of the expression
++            JCExpression resultExpr = make.Ident(targetTmpSym);
++            resultExpr.type = targetType;
++            result = make.LetExpr(stmts.toList(), resultExpr).setType(targetType);
++            return;
++        }
++
++        // JavaSuper: Handle Json property assignment: json.name = val → json.put("name", Json.of(val))
++        if (tree.lhs instanceof JCFieldAccess fa && fa.type != null &&
++                isJsonType(fa.type) &&
++                fa.sym != null && (fa.sym.kind == ERR || fa.sym.kind.isResolutionError())) {
++            make_at(tree.pos());
++            JCExpression selected = translate(fa.selected);
++            JCExpression key = make.Literal(fa.name.toString()).setType(syms.stringType);
++            JCExpression val = translate(tree.rhs);
++            JCExpression wrappedVal = jsonOf(val);
++            result = jsonInstanceCall(selected, names.put, List.of(key, wrappedVal));
++            return;
++        }
++
++        // JavaSuper: Handle Json bracket assignment: json["key"] = val → json.put("key", Json.of(val))
++        if (tree.lhs instanceof JCArrayAccess ia && ia.indexed.type != null &&
++                isJsonType(ia.indexed.type)) {
++            make_at(tree.pos());
++            JCExpression indexed = translate(ia.indexed);
++            JCExpression index = translate(ia.index);
++            JCExpression val = translate(tree.rhs);
++            JCExpression wrappedVal = jsonOf(val);
++            result = jsonInstanceCall(indexed, names.put, List.of(index, wrappedVal));
++            return;
++        }
++
+         tree.lhs = translate(tree.lhs, tree);
+         tree.rhs = translate(tree.rhs, tree.lhs.type);
+ 
+@@ -4263,6 +4373,16 @@ public void visitNewArray(JCNewArray tree) {
+     }
+ 
+     public void visitSelect(JCFieldAccess tree) {
++        // JavaSuper: Json dynamic property access — desugar x.name to x.get("name")
++        if (tree.type != null && tree.sym != null &&
++                (tree.sym.kind == ERR || tree.sym.kind.isResolutionError()) &&
++                isJsonType(tree.type)) {
++            make_at(tree.pos());
++            JCExpression selected = translate(tree.selected);
++            JCExpression keyLit = make.Literal(tree.name.toString()).setType(syms.stringType);
++            result = jsonInstanceCall(selected, names.get, List.of(keyLit));
++            return;
++        }
+         // need to special case-access of the form C.super.x
+         // these will always need an access method, unless C
+         // is a default interface subclassed by the current class.
+@@ -4294,6 +4414,297 @@ public void visitLetExpr(LetExpr tree) {
+         result = tree;
+     }
+ 
++    // ---- JavaSuper: Desugaring visitors for new language features ----
++
++    /** Check if a type is the java.json.Json type. Uses name comparison for module-safety. */
++    private boolean isJsonType(Type t) {
++        if (t == null || t.tsym == null) return false;
++        return t.tsym.flatName().toString().equals("java.json.Json");
++    }
++
++    /** Resolve the java.json.Json type. Caches in syms.jsonType. */
++    private Type resolveJsonType() {
++        if (syms.jsonType != null) return syms.jsonType;
++        ModuleSymbol jsonModule = syms.enterModule(names.fromString("java.json"));
++        ClassSymbol cs = syms.enterClass(jsonModule, names.fromString("java.json.Json"));
++        if (cs != null && cs.type != null) {
++            syms.jsonType = cs.type;
++        }
++        return syms.jsonType;
++    }
++
++    // Helper: create a static method call like Json.of(arg) or Json.ofEntries(args)
++    private JCExpression jsonStaticCall(Name methodName, List<JCExpression> args) {
++        Type jt = resolveJsonType();
++        MethodSymbol msym = lookupMethod(make_pos, methodName, jt,
++                                         TreeInfo.types(args));
++        JCExpression fn = make.Select(make.QualIdent(jt.tsym), msym);
++        fn.type = msym.type;
++        JCMethodInvocation app = make.App(fn, args);
++        app.type = jt;
++        return app;
++    }
++
++    // Helper: create instance method call like target.get(arg)
++    private JCExpression jsonInstanceCall(JCExpression target, Name methodName, List<JCExpression> args) {
++        Type jt = resolveJsonType();
++        MethodSymbol msym = lookupMethod(make_pos, methodName, jt,
++                                         TreeInfo.types(args));
++        JCExpression fn = make.Select(target, msym);
++        fn.type = msym.type;
++        JCMethodInvocation app = make.App(fn, args);
++        app.type = jt;
++        return app;
++    }
++
++    // Helper: wrap a value in Json.of(value)
++    private JCExpression jsonOf(JCExpression value) {
++        return jsonStaticCall(names.of, List.of(value));
++    }
++
++    /** Desugar JSON object literal: {"key": val, ...} → Json.ofEntries(new Object[]{"key", Json.of(val), ...}) */
++    public void visitJsonObject(JCJsonObjectLiteral tree) {
++        make_at(tree.pos());
++        ListBuffer<JCExpression> elems = new ListBuffer<>();
++        for (JCTree.JCJsonEntry entry : tree.entries) {
++            JCExpression key = make.Literal(entry.key.toString()).setType(syms.stringType);
++            JCExpression val = translate(entry.value);
++            elems.append(key);
++            elems.append(jsonOf(val));
++        }
++        // Wrap in Object[] for varargs call
++        JCNewArray argsArray = make.NewArray(make.Type(syms.objectType),
++                                            List.nil(),
++                                            elems.toList());
++        argsArray.type = new ArrayType(syms.objectType, syms.arrayClass);
++        result = jsonStaticCall(names.ofEntries, List.of(argsArray));
++    }
++
++    /** Desugar JSON entry — handled within visitJsonObject */
++    public void visitJsonEntry(JCTree.JCJsonEntry tree) {
++        tree.value = translate(tree.value);
++        result = tree;
++    }
++
++    /** Desugar JSON array literal: [a, b, ...] → Json.ofElements(new Json[]{Json.of(a), Json.of(b), ...}) */
++    public void visitJsonArray(JCJsonArrayLiteral tree) {
++        make_at(tree.pos());
++        Type jt = resolveJsonType();
++        ListBuffer<JCExpression> wrappedElems = new ListBuffer<>();
++        for (JCExpression elem : tree.elements) {
++            JCExpression translated = translate(elem);
++            wrappedElems.append(jsonOf(translated));
++        }
++        // Wrap in Json[] for varargs call
++        JCNewArray argsArray = make.NewArray(make.Type(jt),
++                                            List.nil(),
++                                            wrappedElems.toList());
++        argsArray.type = new ArrayType(jt, syms.arrayClass);
++        result = jsonStaticCall(names.ofElements, List.of(argsArray));
++    }
++
++    /** Desugar copy expression: copy source → field-by-field assignment (done at assignment site) */
++    public void visitCopyExpr(JCCopyExpr tree) {
++        // The copy expression needs context from the assignment target.
++        // At this point we translate the source and pass through.
++        // The actual field-copy desugaring happens in visitAssign when LHS = copy RHS.
++        tree.source = translate(tree.source);
++        result = tree;
++    }
++
++    /** Desugar match expression → switch expression */
++    public void visitMatchExpr(JCMatchExpression tree) {
++        make_at(tree.pos());
++        JCExpression selector = translate(tree.selector);
++        // Create the switch expression first so we can remap yield targets
++        JCSwitchExpression switchExpr = make.SwitchExpression(selector, tree.cases);
++        switchExpr.type = tree.type;
++        switchExpr.endpos = tree.endpos;
++        // Remap yield targets from the match expression to the new switch expression
++        new TreeScanner() {
++            @Override
++            public void visitYield(JCYield yld) {
++                if (yld.target == tree) {
++                    yld.target = switchExpr;
++                }
++                super.visitYield(yld);
++            }
++        }.scan(tree.cases);
++        // Now translate the cases
++        ListBuffer<JCCase> translatedCases = new ListBuffer<>();
++        for (JCCase c : tree.cases) {
++            c.stats = translate(c.stats);
++            if (c.body instanceof JCExpression expr) {
++                c.body = translate(expr);
++            }
++            translatedCases.append(c);
++        }
++        switchExpr.cases = translatedCases.toList();
++        result = switchExpr;
++    }
++
++    /** Desugar null-safe select: a?.b → (let tmp = a; tmp != null ? tmp.b : null) */
++    public void visitNullSafeSelect(JCNullSafeSelect tree) {
++        make_at(tree.pos());
++        JCExpression selected = translate(tree.selected);
++        Type resultType = tree.type;
++        // Create temp variable
++        VarSymbol tmpSym = new VarSymbol(FINAL | SYNTHETIC,
++                names.fromString(target.syntheticNameChar() + "ns" + tree.hashCode()),
++                selected.type, currentMethodSym);
++        JCVariableDecl tmpDef = make.VarDef(tmpSym, selected);
++        // Build: tmp != null ? tmp.field : null
++        JCExpression nullCheck = makeBinary(NE, make.Ident(tmpSym), makeNull());
++        // If site is Json, use .get("name"), otherwise use .name
++        JCExpression access;
++        if (isJsonType(selected.type)) {
++            JCExpression keyLit = make.Literal(tree.name.toString()).setType(syms.stringType);
++            access = jsonInstanceCall(make.Ident(tmpSym), names.get, List.of(keyLit));
++        } else {
++            access = make.Select(make.Ident(tmpSym), tree.sym != null ? tree.sym : syms.errSymbol);
++            access.type = resultType;
++        }
++        JCExpression nullVal = makeNull();
++        JCExpression cond = make.Conditional(nullCheck, access, nullVal).setType(resultType);
++        JCExpression letExpr = make.LetExpr(tmpDef, cond).setType(resultType);
++        result = letExpr;
++    }
++
++    /** Desugar null-safe indexed: a?[i] → (let tmp = a; tmp != null ? tmp[i] : null) */
++    public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++        make_at(tree.pos());
++        JCExpression indexed = translate(tree.indexed);
++        JCExpression index = translate(tree.index);
++        Type resultType = tree.type;
++        VarSymbol tmpSym = new VarSymbol(FINAL | SYNTHETIC,
++                names.fromString(target.syntheticNameChar() + "nsi" + tree.hashCode()),
++                indexed.type, currentMethodSym);
++        JCVariableDecl tmpDef = make.VarDef(tmpSym, indexed);
++        JCExpression nullCheck = makeBinary(NE, make.Ident(tmpSym), makeNull());
++        // If Json, use .get(index), otherwise use array access
++        JCExpression access;
++        if (isJsonType(indexed.type)) {
++            access = jsonInstanceCall(make.Ident(tmpSym), names.get, List.of(index));
++        } else {
++            access = make.Indexed(make.Ident(tmpSym), index);
++            access.type = resultType;
++        }
++        JCExpression nullVal = makeNull();
++        JCExpression cond = make.Conditional(nullCheck, access, nullVal).setType(resultType);
++        result = make.LetExpr(tmpDef, cond).setType(resultType);
++    }
++
++    /** Desugar null coalescing: a ?? b → (let tmp = a; tmp != null ? tmp : b) */
++    public void visitNullCoalesce(JCNullCoalesce tree) {
++        make_at(tree.pos());
++        JCExpression lhs = translate(tree.lhs);
++        JCExpression rhs = translate(tree.rhs);
++        Type resultType = tree.type;
++        // Use resultType for the temp var to handle null literal LHS (which has <nulltype>)
++        Type tmpType = (lhs.type != null && !lhs.type.hasTag(BOT)) ? lhs.type : resultType;
++        VarSymbol tmpSym = new VarSymbol(FINAL | SYNTHETIC,
++                names.fromString(target.syntheticNameChar() + "nc" + tree.hashCode()),
++                tmpType, currentMethodSym);
++        JCVariableDecl tmpDef = make.VarDef(tmpSym, lhs);
++        JCExpression nullCheck = makeBinary(NE, make.Ident(tmpSym), makeNull());
++        JCExpression cond = make.Conditional(nullCheck, make.Ident(tmpSym), rhs).setType(resultType);
++        result = make.LetExpr(tmpDef, cond).setType(resultType);
++    }
++
++    /** Wrap an expression in CompletableFuture.completedFuture(expr).
++     *  If the expression is a primitive type, box it first. */
++    private JCExpression wrapInCompletedFuture(JCExpression expr, Type origReturnType) {
++        // Box primitive types
++        JCExpression boxedExpr = expr;
++        if (origReturnType.isPrimitive()) {
++            boxedExpr = boxIfNeeded(expr, origReturnType);
++        }
++        // Build: CompletableFuture.completedFuture(boxedExpr)
++        MethodSymbol completedFutureSym = lookupMethod(make_pos,
++                names.completedFuture,
++                syms.completableFutureType,
++                List.of(syms.objectType));
++        JCExpression cfClass = make.QualIdent(syms.completableFutureType.tsym);
++        cfClass.type = syms.completableFutureType;
++        JCFieldAccess select = make.Select(cfClass, completedFutureSym);
++        select.type = completedFutureSym.type;
++        select.sym = completedFutureSym;
++        JCMethodInvocation call = make.App(select, List.of(boxedExpr));
++        // Set the return type to Future<T> (CompletableFuture<T>)
++        Type futureOfT = new Type.ClassType(
++                syms.completableFutureType.getEnclosingType(),
++                List.of(types.boxedTypeOrType(origReturnType)),
++                syms.completableFutureType.tsym);
++        call.type = futureOfT;
++        return call;
++    }
++
++    /** Desugar await expr → expr.get() wrapped in try/catch */
++    public void visitAwait(JCAwait tree) {
++        make_at(tree.pos());
++        JCExpression futureExpr = translate(tree.expr);
++        // Desugar to: (T) futureExpr.get()
++        MethodSymbol getSym = lookupMethod(make_pos, names.get, syms.futureType, List.nil());
++        JCExpression getCall = make.App(make.Select(futureExpr, getSym));
++        getCall.type = syms.objectType; // Future.get() returns Object
++        // Cast to the expected type
++        Type targetType = tree.type;
++        if (targetType != null && !targetType.hasTag(TypeTag.VOID) && !targetType.hasTag(TypeTag.NONE)) {
++            Type boxedTarget = types.boxedTypeOrType(targetType);
++            JCTypeCast cast = make.TypeCast(boxedTarget, getCall);
++            cast.type = boxedTarget;
++            // Unbox if the target is a primitive type
++            if (targetType.isPrimitive()) {
++                result = unbox(cast, targetType);
++            } else {
++                result = cast;
++            }
++        } else {
++            result = getCall;
++        }
++    }
++
++    /** Desugar await (e1, e2, ...) → sequential .get() calls, return last */
++    public void visitAwaitAll(JCAwaitAll tree) {
++        make_at(tree.pos());
++        // For simplicity, generate sequential get() calls
++        MethodSymbol getSym = lookupMethod(make_pos, names.get, syms.futureType, List.nil());
++        ListBuffer<JCStatement> stmts = new ListBuffer<>();
++        JCExpression lastResult = null;
++        for (JCExpression expr : tree.exprs) {
++            JCExpression translated = translate(expr);
++            JCExpression getCall = make.App(make.Select(translated, getSym));
++            getCall.type = syms.objectType;
++            lastResult = getCall;
++            stmts.append(make.Exec(getCall));
++        }
++        if (lastResult != null) {
++            result = lastResult;
++        } else {
++            result = makeNull();
++        }
++    }
++
++    /** Desugar await any(e1, e2, ...) → simple race using first completed */
++    public void visitAwaitAny(JCAwaitAny tree) {
++        make_at(tree.pos());
++        // Simplified: just await the first expression
++        JCExpression first = translate(tree.exprs.head);
++        MethodSymbol getSym = lookupMethod(make_pos, names.get, syms.futureType, List.nil());
++        JCExpression getCall = make.App(make.Select(first, getSym));
++        getCall.type = tree.type;
++        result = getCall;
++    }
++
++    // Modify visitSelect to handle Json dynamic property access
++    // (This is handled in the existing visitSelect — when sym.kind == ERR and site is Json,
++    //  Attr.java already set tree.type = jsonType. Lower detects this and desugars to .get("name"))
++
++    // Modify visitAssign to handle copy and Json assignment desugaring
++    // We intercept in the existing visitAssign — check if RHS is JCCopyExpr
++
++    // ---- End JavaSuper desugaring visitors ----
++
+     // There ought to be nothing to rewrite here;
+     // we don't generate code.
+     public void visitAnnotation(JCAnnotation tree) {
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/MemberEnter.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/MemberEnter.java
+index b726cc7a6..238e4a6fb 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/MemberEnter.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/MemberEnter.java
+@@ -205,6 +205,19 @@ public void visitMethodDef(JCMethodDecl tree) {
+             deferredLintHandler.pop();
+         }
+ 
++        // For async methods, wrap return type T -> Future<T>
++        if ((m.flags_field & ASYNC) != 0 && m.type instanceof MethodType mt) {
++            Type origReturn = mt.getReturnType();
++            // Create Future<T> parameterized type
++            Type futureOfT = new ClassType(
++                    syms.futureType.getEnclosingType(),
++                    com.sun.tools.javac.util.List.of(types.boxedTypeOrType(origReturn)),
++                    syms.futureType.tsym);
++            m.type = new MethodType(mt.getParameterTypes(), futureOfT, mt.getThrownTypes(), mt.tsym);
++            // Store the original return type for await to extract
++            m.originalAsyncReturnType = origReturn;
++        }
++
+         if (types.isSignaturePolymorphic(m)) {
+             m.flags_field |= SIGNATURE_POLYMORPHIC;
+         }
+@@ -248,8 +261,13 @@ Env<AttrContext> methodEnv(JCMethodDecl tree, Env<AttrContext> env) {
+         localEnv.enclMethod = tree;
+         if (tree.sym.type != null) {
+             //when this is called in the enter stage, there's no type to be set
+-            localEnv.info.returnResult = attr.new ResultInfo(KindSelector.VAL,
+-                                                             tree.sym.type.getReturnType());
++            // For async methods, use the original return type (before Future<T> wrapping)
++            // so that return statements in the body are type-checked against T, not Future<T>
++            Type retType = tree.sym.type.getReturnType();
++            if ((tree.sym.flags() & ASYNC) != 0 && tree.sym.originalAsyncReturnType != null) {
++                retType = tree.sym.originalAsyncReturnType;
++            }
++            localEnv.info.returnResult = attr.new ResultInfo(KindSelector.VAL, retType);
+         }
+         if ((tree.mods.flags & STATIC) != 0) localEnv.info.staticLevel++;
+         localEnv.info.yieldResult = null;
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransPatterns.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransPatterns.java
+index 58c36a5cf..37fc37562 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransPatterns.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransPatterns.java
+@@ -408,6 +408,28 @@ public void visitSwitchExpression(JCSwitchExpression tree) {
+                      tree.hasUnconditionalPattern, tree.patternSwitch);
+     }
+ 
++    @Override
++    public void visitMatchExpr(JCTree.JCMatchExpression tree) {
++        // Convert match to switch expression, remap yield targets, then delegate
++        JCSwitchExpression switchExpr = make.at(tree.pos).SwitchExpression(tree.selector, tree.cases);
++        switchExpr.type = tree.type;
++        switchExpr.endpos = tree.endpos;
++        switchExpr.hasUnconditionalPattern = tree.hasUnconditionalPattern;
++        switchExpr.patternSwitch = tree.patternSwitch;
++        // Remap yield targets
++        new com.sun.tools.javac.tree.TreeScanner() {
++            @Override
++            public void visitYield(JCTree.JCYield yld) {
++                if (yld.target == tree) {
++                    yld.target = switchExpr;
++                }
++                super.visitYield(yld);
++            }
++        }.scan(tree.cases);
++        visitSwitchExpression(switchExpr);
++        // result was set by visitSwitchExpression (via handleSwitch)
++    }
++
+     private void handleSwitch(JCTree tree,
+                               JCExpression selector,
+                               List<JCCase> cases,
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransTypes.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransTypes.java
+index 675809db7..20c5c84a4 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransTypes.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/comp/TransTypes.java
+@@ -1071,6 +1071,14 @@ public void visitTypeTest(JCInstanceOf tree) {
+     }
+ 
+     public void visitIndexed(JCArrayAccess tree) {
++        // JavaSuper: Json bracket access — pass through without array-specific erasure
++        if (tree.indexed.type != null && tree.indexed.type.tsym != null &&
++            tree.indexed.type.tsym.flatName().toString().equals("java.json.Json")) {
++            tree.indexed = translate(tree.indexed, null);
++            tree.index = translate(tree.index, null);
++            result = tree;
++            return;
++        }
+         tree.indexed = translate(tree.indexed, erasure(tree.indexed.type));
+         tree.index = translate(tree.index, syms.intType);
+ 
+@@ -1106,6 +1114,14 @@ else if (tree.sym.kind == VAR) {
+     }
+ 
+     public void visitSelect(JCFieldAccess tree) {
++        // JavaSuper: Json dynamic property access — pass through
++        if (tree.selected.type != null && tree.selected.type.tsym != null &&
++            tree.selected.type.tsym.flatName().toString().equals("java.json.Json") &&
++            (tree.sym.kind == ERR || tree.sym.kind.isResolutionError())) {
++            tree.selected = translate(tree.selected, null);
++            result = tree;
++            return;
++        }
+         Type t = types.skipTypeVars(tree.selected.type, false);
+         if (t.isCompound()) {
+             tree.selected = coerce(
+@@ -1128,6 +1144,66 @@ else if (tree.sym.kind == VAR) {
+         }
+     }
+ 
++    // JavaSuper AST nodes -- pass through, will be desugared in Lower
++
++    public void visitJsonObject(JCJsonObjectLiteral tree) {
++        tree.entries = translate(tree.entries, null);
++        result = tree;
++    }
++
++    public void visitJsonEntry(JCJsonEntry tree) {
++        tree.value = translate(tree.value, null);
++        result = tree;
++    }
++
++    public void visitJsonArray(JCJsonArrayLiteral tree) {
++        tree.elements = translate(tree.elements, null);
++        result = tree;
++    }
++
++    public void visitCopyExpr(JCCopyExpr tree) {
++        tree.source = translate(tree.source, null);
++        result = tree;
++    }
++
++    public void visitMatchExpr(JCMatchExpression tree) {
++        tree.selector = translate(tree.selector, null);
++        tree.cases = translateCases(tree.cases);
++        result = tree;
++    }
++
++    public void visitNullSafeSelect(JCNullSafeSelect tree) {
++        tree.selected = translate(tree.selected, null);
++        result = tree;
++    }
++
++    public void visitNullSafeIndexed(JCNullSafeIndexed tree) {
++        tree.indexed = translate(tree.indexed, null);
++        tree.index = translate(tree.index, null);
++        result = tree;
++    }
++
++    public void visitNullCoalesce(JCNullCoalesce tree) {
++        tree.lhs = translate(tree.lhs, null);
++        tree.rhs = translate(tree.rhs, null);
++        result = tree;
++    }
++
++    public void visitAwait(JCAwait tree) {
++        tree.expr = translate(tree.expr, null);
++        result = tree;
++    }
++
++    public void visitAwaitAll(JCAwaitAll tree) {
++        tree.exprs = translate(tree.exprs, null);
++        result = tree;
++    }
++
++    public void visitAwaitAny(JCAwaitAny tree) {
++        tree.exprs = translate(tree.exprs, null);
++        result = tree;
++    }
++
+     public void visitTypeArray(JCArrayTypeTree tree) {
+         tree.elemtype = translate(tree.elemtype, null);
+         tree.type = erasure(tree.type);
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/CRTable.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/CRTable.java
+index 2cd4142c7..cb46a701a 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/CRTable.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/CRTable.java
+@@ -568,6 +568,19 @@ public void visitErroneous(JCErroneous tree) {
+             result = null;
+         }
+ 
++        // JavaSuper: Custom AST nodes (should be desugared before code gen)
++        public void visitJsonObject(JCTree.JCJsonObjectLiteral tree) { result = null; }
++        public void visitJsonEntry(JCTree.JCJsonEntry tree) { result = null; }
++        public void visitJsonArray(JCTree.JCJsonArrayLiteral tree) { result = null; }
++        public void visitCopyExpr(JCTree.JCCopyExpr tree) { result = null; }
++        public void visitMatchExpr(JCTree.JCMatchExpression tree) { result = null; }
++        public void visitNullSafeSelect(JCTree.JCNullSafeSelect tree) { result = null; }
++        public void visitNullSafeIndexed(JCTree.JCNullSafeIndexed tree) { result = null; }
++        public void visitNullCoalesce(JCTree.JCNullCoalesce tree) { result = null; }
++        public void visitAwait(JCTree.JCAwait tree) { result = null; }
++        public void visitAwaitAll(JCTree.JCAwaitAll tree) { result = null; }
++        public void visitAwaitAny(JCTree.JCAwaitAny tree) { result = null; }
++
+         public void visitTree(JCTree tree) {
+             Assert.error();
+         }
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/Gen.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/Gen.java
+index e91646699..a296902be 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/Gen.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/Gen.java
+@@ -978,11 +978,35 @@ else if (tree.body != null) {
+                         env.enclMethod.sym.type.getReturnType().hasTag(VOID)) {
+                         code.emitop0(return_);
+                     } else {
+-                        // sometime dead code seems alive (4415991);
+-                        // generate a small loop instead
+-                        int startpc = code.entryPoint();
+-                        CondItem c = items.makeCondItem(goto_);
+-                        code.resolve(c.jumpTrue(), startpc);
++                        // JavaSuper: Auto-return default value for non-void methods
++                        Type retType = env.enclMethod.sym.type.getReturnType();
++                        if (retType.isPrimitive()) {
++                            switch (retType.getTag()) {
++                                case BOOLEAN: case BYTE: case CHAR: case SHORT: case INT:
++                                    code.emitop0(iconst_0);
++                                    code.emitop0(ireturn);
++                                    break;
++                                case LONG:
++                                    code.emitop0(lconst_0);
++                                    code.emitop0(lreturn);
++                                    break;
++                                case FLOAT:
++                                    code.emitop0(fconst_0);
++                                    code.emitop0(freturn);
++                                    break;
++                                case DOUBLE:
++                                    code.emitop0(dconst_0);
++                                    code.emitop0(dreturn);
++                                    break;
++                                default:
++                                    code.emitop0(aconst_null);
++                                    code.emitop0(areturn);
++                                    break;
++                            }
++                        } else {
++                            code.emitop0(aconst_null);
++                            code.emitop0(areturn);
++                        }
+                     }
+                 }
+                 if (genCrt)
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavaTokenizer.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavaTokenizer.java
+index d799975a7..4269e0f1c 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavaTokenizer.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavaTokenizer.java
+@@ -748,7 +748,7 @@ private void scanIdent() {
+      */
+     private boolean isSpecial(char ch) {
+         switch (ch) {
+-        case '!': case '%': case '&': case '*': case '?':
++        case '!': case '%': case '&': case '*':
+         case '+': case '-': case ':': case '<': case '=':
+         case '>': case '^': case '|': case '~':
+         case '@':
+@@ -1016,6 +1016,22 @@ public Token readToken() {
+                 case '\"': // (Spec. 3.10)
+                     scanString(pos);
+                     break loop;
++                case '?': // JavaSuper: handle ?. ?? ?[ as well as standard ?
++                    next();
++                    if (is('.')) {
++                        next();
++                        tk = TokenKind.QUES_DOT;
++                    } else if (is('?')) {
++                        next();
++                        tk = TokenKind.QUES_QUES;
++                    } else if (is('[')) {
++                        next();
++                        tk = TokenKind.QUES_LBRACKET;
++                    } else {
++                        tk = TokenKind.QUES;
++                    }
++                    break loop;
++
+                 default:
+                     if (isSpecial(get())) {
+                         scanOperator();
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavacParser.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavacParser.java
+index 1383baa57..93da61381 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavacParser.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/JavacParser.java
+@@ -1550,8 +1550,50 @@ protected JCExpression term3() {
+                 t = insertAnnotationsToMostInner(expr, typeAnnos, false);
+             }
+             break;
++        // JavaSuper: JSON object literal { key: value, ... }
++        case LBRACE:
++            if (typeArgs == null && isMode(EXPR) && isJsonObjectLiteral()) {
++                selectExprMode();
++                t = parseJsonObjectLiteral();
++                return t;
++            } else {
++                return illegal();
++            }
++
++        // JavaSuper: JSON array literal [ value, ... ]
++        case LBRACKET:
++            if (typeArgs == null && isMode(EXPR)) {
++                selectExprMode();
++                t = parseJsonArrayLiteral();
++                return t;
++            } else {
++                return illegal();
++            }
++
+         case UNDERSCORE: case IDENTIFIER: case ASSERT: case ENUM:
+             if (typeArgs != null) return illegal();
++            // JavaSuper: context-sensitive keywords: copy, match, await
++            // These must only be recognized as keywords when followed by
++            // expression-starting tokens, NOT when used as regular identifiers
++            // (e.g. copy = ..., copy; copy, copy. copy[ await = ...)
++            if (isMode(EXPR) && token.kind == IDENTIFIER) {
++                Name name = token.name();
++                if (name == names.copy && isCopyKeywordContext()) {
++                    nextToken();
++                    selectExprMode();
++                    JCExpression source = term3();
++                    t = toP(F.at(pos).CopyExpr(source));
++                    return t;
++                }
++                if (name == names.match && isMatchKeywordContext()) {
++                    t = parseMatchExpression(pos);
++                    return t;
++                }
++                if (name == names.await && isAwaitKeywordContext()) {
++                    t = parseAwaitExpression(pos);
++                    return t;
++                }
++            }
+             if (isMode(EXPR) && !isMode(NOLAMBDA) && peekToken(ARROW)) {
+                 t = lambdaExpressionOrStatement(false, false, pos);
+             } else {
+@@ -1875,6 +1917,30 @@ JCExpression term3Rest(JCExpression t, List<JCExpression> typeArgs) {
+                     t = argumentsOpt(typeArgs, typeArgumentsOpt(t));
+                     typeArgs = null;
+                 }
++            // JavaSuper: null-safe member access expr?.name
++            } else if (token.kind == QUES_DOT && isMode(EXPR)) {
++                selectExprMode();
++                nextToken();
++                Name name = ident(true);
++                t = toP(F.at(pos1).NullSafeSelect(t, name));
++                // Handle method call: expr?.method(args)
++                if (token.kind == LPAREN) {
++                    t = arguments(typeArgs, t);
++                    typeArgs = null;
++                }
++            // JavaSuper: null-safe index access expr?[index]
++            } else if (token.kind == QUES_LBRACKET && isMode(EXPR)) {
++                selectExprMode();
++                nextToken();
++                JCExpression index = term();
++                accept(RBRACKET);
++                t = toP(F.at(pos1).NullSafeIndexed(t, index));
++            // JavaSuper: null coalescing expr ?? expr
++            } else if (token.kind == QUES_QUES && isMode(EXPR)) {
++                selectExprMode();
++                nextToken();
++                JCExpression rhs = term3();
++                t = toP(F.at(pos1).NullCoalesce(t, rhs));
+             } else if (isMode(EXPR) && token.kind == COLCOL) {
+                 selectExprMode();
+                 if (typeArgs != null) return illegal();
+@@ -1899,6 +1965,269 @@ JCExpression term3Rest(JCExpression t, List<JCExpression> typeArgs) {
+         return toP(t);
+     }
+ 
++    // ---- JavaSuper: JSON, copy, match, await parsing helpers ----
++
++    /**
++     * Check if 'match' should be treated as a keyword here.
++     * match expression: match (expr) { case ... }
++     * method call: match(args) or match(a, b, c)
++     * We scan ahead: match must be followed by ( ... ) { to be a keyword.
++     * Scans for balanced parens after match, then checks for {.
++     */
++    boolean isMatchKeywordContext() {
++        if (S.token(1).kind != LPAREN) return false;
++        // Scan forward for balanced parens starting at token(1) = LPAREN
++        int depth = 0;
++        int i = 1;
++        while (true) {
++            TokenKind tk = S.token(i).kind;
++            if (tk == EOF) return false;
++            if (tk == LPAREN) depth++;
++            else if (tk == RPAREN) {
++                depth--;
++                if (depth == 0) {
++                    // Check token after matching )
++                    return S.token(i + 1).kind == LBRACE;
++                }
++            }
++            i++;
++            if (i > 100) return false; // safety limit
++        }
++    }
++
++    /**
++     * Check if 'copy' should be treated as a keyword here.
++     * 'copy' as keyword: always followed by a simple identifier (the source object).
++     * e.g., "cat = copy dog;" — next token is IDENTIFIER but NOT followed by '(' (method call).
++     * 'copy' as regular identifier: copy = ..., copy; copy, copy( copy. copy[
++     */
++    boolean isCopyKeywordContext() {
++        TokenKind next = S.token(1).kind;
++        if (next == IDENTIFIER || next == THIS || next == SUPER || next == NEW) {
++            // Exclude method call pattern: copy(...)
++            // IDENTIFIER followed by ( could still be "copy someVar" where someVar is then called,
++            // but that's fine — we only care that "copy" itself isn't a method being called.
++            return true;
++        }
++        return false;
++    }
++
++    /**
++     * Check if the next token (token after current IDENTIFIER) could start an expression,
++     * excluding tokens that indicate the current IDENTIFIER is being used as a regular
++     * variable/field name (=, ;, ,, ), ., [).
++     * Used to guard 'await' context-sensitive keyword.
++     */
++    boolean isAwaitKeywordContext() {
++        TokenKind next = S.token(1).kind;
++        switch (next) {
++            // await expr — next is identifier (but not followed by =, which means "await = ...")
++            case IDENTIFIER: case UNDERSCORE:
++            case NEW: case THIS: case SUPER:
++            // await (expr, expr) — tuple await
++            case LPAREN:
++            // Literals: await someExpr starting with literal (unlikely but valid)
++            case INTLITERAL: case LONGLITERAL: case FLOATLITERAL: case DOUBLELITERAL:
++            case CHARLITERAL: case STRINGLITERAL: case TRUE: case FALSE: case NULL:
++            // Unary prefix
++            case BANG: case TILDE: case PLUSPLUS: case SUBSUB:
++                return true;
++            default:
++                return false;
++        }
++    }
++
++    /**
++     * Lookahead to determine if a LBRACE starts a JSON object literal
++     * rather than a block or lambda. JSON object: { ident: ... } or { "str": ... } or { }
++     */
++    boolean isJsonObjectLiteral() {
++        // Empty object: { }
++        if (S.token(1).kind == RBRACE) return true;
++        // { identifier : ... } or { "string" : ... }
++        TokenKind first = S.token(1).kind;
++        if (first == IDENTIFIER || first == STRINGLITERAL) {
++            return S.token(2).kind == COLON;
++        }
++        return false;
++    }
++
++    /** Like isJsonObjectLiteral but excludes empty {}. Used in variableInitializer to avoid
++     *  ambiguity with empty array initializers.
++     */
++    boolean isJsonObjectLiteralNonEmpty() {
++        TokenKind first = S.token(1).kind;
++        if (first == IDENTIFIER || first == STRINGLITERAL) {
++            return S.token(2).kind == COLON;
++        }
++        return false;
++    }
++
++    /**
++     * JsonObjectLiteral = "{" [ JsonEntry { "," JsonEntry } ] "}"
++     */
++    JCExpression parseJsonObjectLiteral() {
++        int pos = token.pos;
++        accept(LBRACE);
++        ListBuffer<JCTree.JCJsonEntry> entries = new ListBuffer<>();
++        if (token.kind != RBRACE) {
++            entries.append(parseJsonEntry());
++            while (token.kind == COMMA) {
++                nextToken();
++                if (token.kind == RBRACE) break; // trailing comma
++                entries.append(parseJsonEntry());
++            }
++        }
++        accept(RBRACE);
++        return toP(F.at(pos).JsonObject(entries.toList()));
++    }
++
++    /**
++     * JsonEntry = (Ident | StringLiteral) ":" Expression
++     */
++    JCTree.JCJsonEntry parseJsonEntry() {
++        int pos = token.pos;
++        Name key;
++        if (token.kind == STRINGLITERAL) {
++            key = names.fromString(token.stringVal());
++            nextToken();
++        } else {
++            key = ident();
++        }
++        accept(COLON);
++        JCExpression value = parseJsonValue();
++        return toP(F.at(pos).JsonEntry(key, value));
++    }
++
++    /**
++     * JsonValue = JsonObjectLiteral | JsonArrayLiteral | Expression
++     */
++    JCExpression parseJsonValue() {
++        if (token.kind == LBRACE) {
++            return parseJsonObjectLiteral();
++        } else if (token.kind == LBRACKET) {
++            return parseJsonArrayLiteral();
++        } else {
++            return parseExpression();
++        }
++    }
++
++    /**
++     * JsonArrayLiteral = "[" [ JsonValue { "," JsonValue } ] "]"
++     */
++    JCExpression parseJsonArrayLiteral() {
++        int pos = token.pos;
++        accept(LBRACKET);
++        ListBuffer<JCExpression> elems = new ListBuffer<>();
++        if (token.kind != RBRACKET) {
++            elems.append(parseJsonValue());
++            while (token.kind == COMMA) {
++                nextToken();
++                if (token.kind == RBRACKET) break; // trailing comma
++                elems.append(parseJsonValue());
++            }
++        }
++        accept(RBRACKET);
++        return toP(F.at(pos).JsonArray(elems.toList()));
++    }
++
++    /**
++     * MatchExpression = "match" "(" Expression ")" "{" MatchCases "}"
++     * MatchCases = MatchCase { MatchCase }
++     * MatchCase = ("case" CaseLabels | "else") "->" Expression ";"
++     */
++    JCExpression parseMatchExpression(int pos) {
++        nextToken(); // consume 'match'
++        accept(LPAREN);
++        JCExpression selector = parseExpression();
++        accept(RPAREN);
++        accept(LBRACE);
++        ListBuffer<JCCase> cases = new ListBuffer<>();
++        while (token.kind != RBRACE && token.kind != EOF) {
++            int casePos = token.pos;
++            ListBuffer<JCCaseLabel> pats = new ListBuffer<>();
++            if (token.kind == CASE) {
++                accept(CASE);
++                boolean allowDefault = false;
++                while (true) {
++                    JCCaseLabel label = parseCaseLabel(allowDefault);
++                    pats.append(label);
++                    if (token.kind != COMMA) break;
++                    nextToken();
++                    allowDefault = TreeInfo.isNullCaseLabel(label);
++                }
++            } else if (token.kind == ELSE) {
++                nextToken(); // consume 'else'
++                pats.append(toP(F.at(casePos).DefaultCaseLabel()));
++            } else if (token.kind == DEFAULT) {
++                nextToken();
++                pats.append(toP(F.at(casePos).DefaultCaseLabel()));
++            } else {
++                syntaxError(token.pos, Errors.Expected3(CASE, DEFAULT, RBRACE));
++                nextToken();
++                continue;
++            }
++            JCExpression guard = parseGuard(pats.last());
++            accept(ARROW);
++            JCExpression value = parseExpression();
++            List<JCStatement> stats = List.of(to(F.at(value).Yield(value)));
++            accept(SEMI);
++            cases.append(toP(F.at(casePos).Case(JCCase.RULE, pats.toList(), guard, stats, value)));
++        }
++        int endpos = token.pos;
++        accept(RBRACE);
++        JCTree.JCMatchExpression me = toP(F.at(pos).MatchExpr(selector, cases.toList()));
++        me.endpos = endpos;
++        return me;
++    }
++
++    /**
++     * AwaitExpression = "await" Expression
++     *                 | "await" "(" Expression { "," Expression } ")"   -- await all
++     *                 | "await" "any" "(" Expression { "," Expression } ")" -- await any
++     */
++    JCExpression parseAwaitExpression(int pos) {
++        nextToken(); // consume 'await'
++        // await any(expr, ...)
++        if (token.kind == IDENTIFIER && token.name().toString().equals("any")) {
++            nextToken(); // consume 'any'
++            accept(LPAREN);
++            ListBuffer<JCExpression> exprs = new ListBuffer<>();
++            exprs.append(parseExpression());
++            while (token.kind == COMMA) {
++                nextToken();
++                exprs.append(parseExpression());
++            }
++            accept(RPAREN);
++            return toP(F.at(pos).AwaitAny(exprs.toList()));
++        }
++        // await (expr, expr, ...)  -- tuple form for parallel await
++        if (token.kind == LPAREN) {
++            // Lookahead to check if this is await (expr, expr) or just await (expr)
++            // We parse as LPAREN exprs RPAREN; if only one expr, treat as regular await with parens
++            int savedPos = token.pos;
++            nextToken(); // consume '('
++            ListBuffer<JCExpression> exprs = new ListBuffer<>();
++            exprs.append(parseExpression());
++            if (token.kind == COMMA) {
++                // Multi-expression: await (a, b, c) → AwaitAll
++                while (token.kind == COMMA) {
++                    nextToken();
++                    exprs.append(parseExpression());
++                }
++                accept(RPAREN);
++                return toP(F.at(pos).AwaitAll(exprs.toList()));
++            } else {
++                // Single expression in parens: await (expr) → Await
++                accept(RPAREN);
++                return toP(F.at(pos).Await(exprs.first()));
++            }
++        }
++        // Simple: await expr
++        JCExpression expr = term3();
++        return toP(F.at(pos).Await(expr));
++    }
++
+     /**
+      * If we see an identifier followed by a '&lt;' it could be an unbound
+      * method reference or a binary expression. To disambiguate, look for a
+@@ -2795,6 +3124,11 @@ List<JCExpression> arrayInitializerElements(int newpos, JCExpression t) {
+     /** VariableInitializer = ArrayInitializer | Expression
+      */
+     public JCExpression variableInitializer() {
++        // JavaSuper: Check for JSON object literal { key: value, ... } before array initializer.
++        // Empty braces {} are treated as array initializer (use Json.ofObject() for empty JSON).
++        if (token.kind == LBRACE && isJsonObjectLiteralNonEmpty()) {
++            return parseExpression();
++        }
+         return token.kind == LBRACE ? arrayInitializer(token.pos, null) : parseExpression();
+     }
+ 
+@@ -3605,6 +3939,11 @@ protected JCModifiers modifiersOpt(JCModifiers partial) {
+                     flag = Flags.SEALED;
+                     break;
+                 }
++                // JavaSuper: async modifier for methods
++                if (token.name() == names.async) {
++                    flag = Flags.ASYNC;
++                    break;
++                }
+                 break loop;
+             }
+             default: break loop;
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/Tokens.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/Tokens.java
+index 4abd9378c..94d5e24ba 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/Tokens.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/parser/Tokens.java
+@@ -207,6 +207,10 @@ public enum TokenKind implements Formattable, Predicate<TokenKind> {
+         GTGTEQ(">>="),
+         GTGTGTEQ(">>>="),
+         MONKEYS_AT("@"),
++        // JavaSuper tokens
++        QUES_DOT("?."),
++        QUES_QUES("??"),
++        QUES_LBRACKET("?["),
+         CUSTOM;
+ 
+         public final String name;
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/JCTree.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/JCTree.java
+index de86b7e2c..f9881ddc2 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/JCTree.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/JCTree.java
+@@ -386,7 +386,27 @@ public enum Tag {
+ 
+         /** A synthetic let expression, of type LetExpr.
+          */
+-        LETEXPR;                         // ala scheme
++        LETEXPR,                         // ala scheme
++
++        // JavaSuper: JSON support
++        JSON_OBJECT,
++        JSON_ARRAY,
++
++        // JavaSuper: Structural copy
++        COPY_EXPR,
++
++        // JavaSuper: Match expression
++        MATCH_EXPR,
++
++        // JavaSuper: Null safety
++        NULL_SAFE_SELECT,
++        NULL_SAFE_INDEXED,
++        NULL_COALESCE,
++
++        // JavaSuper: Async/await
++        AWAIT,
++        AWAIT_ALL,
++        AWAIT_ANY;
+ 
+         private final Tag noAssignTag;
+ 
+@@ -3426,6 +3446,201 @@ public Tag getTag() {
+         }
+     }
+ 
++    // ========== JavaSuper AST Nodes ==========
++
++    /** JSON object literal: { "key": value, ... } */
++    public static class JCJsonObjectLiteral extends JCExpression {
++        public List<JCJsonEntry> entries;
++        protected JCJsonObjectLiteral(List<JCJsonEntry> entries) {
++            this.entries = entries;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitJsonObject(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return JSON_OBJECT; }
++    }
++
++    /** JSON entry: key: value */
++    public static class JCJsonEntry extends JCTree {
++        public Name key;
++        public JCExpression value;
++        protected JCJsonEntry(Name key, JCExpression value) {
++            this.key = key;
++            this.value = value;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitJsonEntry(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return Tag.NO_TAG; }
++    }
++
++    /** JSON array literal: [ value, ... ] */
++    public static class JCJsonArrayLiteral extends JCExpression {
++        public List<JCExpression> elements;
++        protected JCJsonArrayLiteral(List<JCExpression> elements) {
++            this.elements = elements;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitJsonArray(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return JSON_ARRAY; }
++    }
++
++    /** Structural copy expression: copy source */
++    public static class JCCopyExpr extends JCExpression {
++        public JCExpression source;
++        /** Filled in by Attr: matched field pairs (target field sym, source field sym) */
++        public List<com.sun.tools.javac.util.Pair<Symbol, Symbol>> matchedFields;
++        protected JCCopyExpr(JCExpression source) {
++            this.source = source;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitCopyExpr(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return COPY_EXPR; }
++    }
++
++    /** Match expression: match (selector) { case ... } */
++    public static class JCMatchExpression extends JCExpression {
++        public JCExpression selector;
++        public List<JCCase> cases;
++        public boolean hasElse;
++        public boolean hasUnconditionalPattern;
++        public boolean patternSwitch;
++        public int endpos = Position.NOPOS;
++        protected JCMatchExpression(JCExpression selector, List<JCCase> cases) {
++            this.selector = selector;
++            this.cases = cases;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitMatchExpr(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return MATCH_EXPR; }
++    }
++
++    /** Null-safe member access: expr?.name */
++    public static class JCNullSafeSelect extends JCExpression {
++        public JCExpression selected;
++        public Name name;
++        public Symbol sym;
++        protected JCNullSafeSelect(JCExpression selected, Name name) {
++            this.selected = selected;
++            this.name = name;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitNullSafeSelect(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return NULL_SAFE_SELECT; }
++    }
++
++    /** Null-safe index access: expr?[index] */
++    public static class JCNullSafeIndexed extends JCExpression {
++        public JCExpression indexed;
++        public JCExpression index;
++        protected JCNullSafeIndexed(JCExpression indexed, JCExpression index) {
++            this.indexed = indexed;
++            this.index = index;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitNullSafeIndexed(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return NULL_SAFE_INDEXED; }
++    }
++
++    /** Null coalescing: expr ?? expr */
++    public static class JCNullCoalesce extends JCExpression {
++        public JCExpression lhs;
++        public JCExpression rhs;
++        protected JCNullCoalesce(JCExpression lhs, JCExpression rhs) {
++            this.lhs = lhs;
++            this.rhs = rhs;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitNullCoalesce(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return NULL_COALESCE; }
++    }
++
++    /** Await expression: await expr */
++    public static class JCAwait extends JCExpression {
++        public JCExpression expr;
++        protected JCAwait(JCExpression expr) {
++            this.expr = expr;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitAwait(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return AWAIT; }
++    }
++
++    /** Await-all: await (expr, expr, ...) */
++    public static class JCAwaitAll extends JCExpression {
++        public List<JCExpression> exprs;
++        protected JCAwaitAll(List<JCExpression> exprs) {
++            this.exprs = exprs;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitAwaitAll(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return AWAIT_ALL; }
++    }
++
++    /** Await-any: await any(expr, expr, ...) */
++    public static class JCAwaitAny extends JCExpression {
++        public List<JCExpression> exprs;
++        protected JCAwaitAny(List<JCExpression> exprs) {
++            this.exprs = exprs;
++        }
++        @Override
++        public void accept(Visitor v) { v.visitAwaitAny(this); }
++        @DefinedBy(Api.COMPILER_TREE)
++        public Kind getKind() { return Kind.OTHER; }
++        @Override @DefinedBy(Api.COMPILER_TREE)
++        public <R,D> R accept(TreeVisitor<R,D> v, D d) { return v.visitOther(this, d); }
++        @Override
++        public Tag getTag() { return AWAIT_ANY; }
++    }
++
+     /** An interface for tree factories
+      */
+     public interface Factory {
+@@ -3599,6 +3814,19 @@ public abstract static class Visitor {
+         public void visitUses(JCUses that)                   { visitTree(that); }
+         public void visitLetExpr(LetExpr that)               { visitTree(that); }
+ 
++        // JavaSuper visitors
++        public void visitJsonObject(JCJsonObjectLiteral that)   { visitTree(that); }
++        public void visitJsonEntry(JCJsonEntry that)            { visitTree(that); }
++        public void visitJsonArray(JCJsonArrayLiteral that)     { visitTree(that); }
++        public void visitCopyExpr(JCCopyExpr that)              { visitTree(that); }
++        public void visitMatchExpr(JCMatchExpression that)      { visitTree(that); }
++        public void visitNullSafeSelect(JCNullSafeSelect that)  { visitTree(that); }
++        public void visitNullSafeIndexed(JCNullSafeIndexed that){ visitTree(that); }
++        public void visitNullCoalesce(JCNullCoalesce that)      { visitTree(that); }
++        public void visitAwait(JCAwait that)                    { visitTree(that); }
++        public void visitAwaitAll(JCAwaitAll that)              { visitTree(that); }
++        public void visitAwaitAny(JCAwaitAny that)              { visitTree(that); }
++
+         public void visitTree(JCTree that)                   { Assert.error(); }
+     }
+ 
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/Pretty.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/Pretty.java
+index 919b2325e..d4a8118c9 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/Pretty.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/Pretty.java
+@@ -1644,6 +1644,90 @@ public void visitLetExpr(LetExpr tree) {
+         }
+     }
+ 
++    // JavaSuper pretty-print visitors
++    public void visitJsonObject(JCTree.JCJsonObjectLiteral tree) {
++        try {
++            print("{");
++            boolean first = true;
++            for (JCTree.JCJsonEntry entry : tree.entries) {
++                if (!first) print(", ");
++                first = false;
++                print("\"" + entry.key + "\": ");
++                printExpr(entry.value);
++            }
++            print("}");
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitJsonEntry(JCTree.JCJsonEntry tree) {
++        try {
++            print("\"" + tree.key + "\": ");
++            printExpr(tree.value);
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitJsonArray(JCTree.JCJsonArrayLiteral tree) {
++        try {
++            print("[");
++            boolean first = true;
++            for (JCExpression elem : tree.elements) {
++                if (!first) print(", ");
++                first = false;
++                printExpr(elem);
++            }
++            print("]");
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitCopyExpr(JCTree.JCCopyExpr tree) {
++        try { print("copy "); printExpr(tree.source); }
++        catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitMatchExpr(JCTree.JCMatchExpression tree) {
++        try {
++            print("match ("); printExpr(tree.selector); print(") {");
++            for (JCCase c : tree.cases) { println(); printExpr(c); }
++            print("}");
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitNullSafeSelect(JCTree.JCNullSafeSelect tree) {
++        try { printExpr(tree.selected); print("?."); print(tree.name); }
++        catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitNullSafeIndexed(JCTree.JCNullSafeIndexed tree) {
++        try { printExpr(tree.indexed); print("?["); printExpr(tree.index); print("]"); }
++        catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitNullCoalesce(JCTree.JCNullCoalesce tree) {
++        try { printExpr(tree.lhs); print(" ?? "); printExpr(tree.rhs); }
++        catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitAwait(JCTree.JCAwait tree) {
++        try { print("await "); printExpr(tree.expr); }
++        catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitAwaitAll(JCTree.JCAwaitAll tree) {
++        try {
++            print("await (");
++            boolean first = true;
++            for (JCExpression e : tree.exprs) {
++                if (!first) print(", ");
++                first = false;
++                printExpr(e);
++            }
++            print(")");
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++    public void visitAwaitAny(JCTree.JCAwaitAny tree) {
++        try {
++            print("await any(");
++            boolean first = true;
++            for (JCExpression e : tree.exprs) {
++                if (!first) print(", ");
++                first = false;
++                printExpr(e);
++            }
++            print(")");
++        } catch (IOException e) { throw new UncheckedIOException(e); }
++    }
++
+     public void visitModifiers(JCModifiers mods) {
+         try {
+             printAnnotations(mods.annotations);
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeMaker.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeMaker.java
+index 0d0852cb9..6e05b1177 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeMaker.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeMaker.java
+@@ -699,6 +699,74 @@ public LetExpr LetExpr(List<JCStatement> defs, JCExpression expr) {
+         return tree;
+     }
+ 
++    // JavaSuper factory methods
++
++    public JCJsonObjectLiteral JsonObject(List<JCJsonEntry> entries) {
++        JCJsonObjectLiteral tree = new JCJsonObjectLiteral(entries);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCJsonEntry JsonEntry(Name key, JCExpression value) {
++        JCJsonEntry tree = new JCJsonEntry(key, value);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCJsonArrayLiteral JsonArray(List<JCExpression> elements) {
++        JCJsonArrayLiteral tree = new JCJsonArrayLiteral(elements);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCCopyExpr CopyExpr(JCExpression source) {
++        JCCopyExpr tree = new JCCopyExpr(source);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCMatchExpression MatchExpr(JCExpression selector, List<JCCase> cases) {
++        JCMatchExpression tree = new JCMatchExpression(selector, cases);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCNullSafeSelect NullSafeSelect(JCExpression selected, Name name) {
++        JCNullSafeSelect tree = new JCNullSafeSelect(selected, name);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCNullSafeIndexed NullSafeIndexed(JCExpression indexed, JCExpression index) {
++        JCNullSafeIndexed tree = new JCNullSafeIndexed(indexed, index);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCNullCoalesce NullCoalesce(JCExpression lhs, JCExpression rhs) {
++        JCNullCoalesce tree = new JCNullCoalesce(lhs, rhs);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCAwait Await(JCExpression expr) {
++        JCAwait tree = new JCAwait(expr);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCAwaitAll AwaitAll(List<JCExpression> exprs) {
++        JCAwaitAll tree = new JCAwaitAll(exprs);
++        tree.pos = pos;
++        return tree;
++    }
++
++    public JCAwaitAny AwaitAny(List<JCExpression> exprs) {
++        JCAwaitAny tree = new JCAwaitAny(exprs);
++        tree.pos = pos;
++        return tree;
++    }
++
+ /* ***************************************************************************
+  * Derived building blocks.
+  ****************************************************************************/
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeScanner.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeScanner.java
+index b9ae35da9..8285f55cd 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeScanner.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeScanner.java
+@@ -416,6 +416,56 @@ public void visitLetExpr(LetExpr tree) {
+         scan(tree.expr);
+     }
+ 
++    // JavaSuper: Scan visitors for new AST nodes
++    public void visitJsonObject(JCTree.JCJsonObjectLiteral tree) {
++        for (JCTree.JCJsonEntry entry : tree.entries) {
++            scan(entry);
++        }
++    }
++
++    public void visitJsonEntry(JCTree.JCJsonEntry tree) {
++        scan(tree.value);
++    }
++
++    public void visitJsonArray(JCTree.JCJsonArrayLiteral tree) {
++        scan(tree.elements);
++    }
++
++    public void visitCopyExpr(JCTree.JCCopyExpr tree) {
++        scan(tree.source);
++    }
++
++    public void visitMatchExpr(JCTree.JCMatchExpression tree) {
++        scan(tree.selector);
++        scan(tree.cases);
++    }
++
++    public void visitNullSafeSelect(JCTree.JCNullSafeSelect tree) {
++        scan(tree.selected);
++    }
++
++    public void visitNullSafeIndexed(JCTree.JCNullSafeIndexed tree) {
++        scan(tree.indexed);
++        scan(tree.index);
++    }
++
++    public void visitNullCoalesce(JCTree.JCNullCoalesce tree) {
++        scan(tree.lhs);
++        scan(tree.rhs);
++    }
++
++    public void visitAwait(JCTree.JCAwait tree) {
++        scan(tree.expr);
++    }
++
++    public void visitAwaitAll(JCTree.JCAwaitAll tree) {
++        scan(tree.exprs);
++    }
++
++    public void visitAwaitAny(JCTree.JCAwaitAny tree) {
++        scan(tree.exprs);
++    }
++
+     public void visitTree(JCTree tree) {
+         Assert.error();
+     }
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeTranslator.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeTranslator.java
+index 63778fb42..67270013f 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeTranslator.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/tree/TreeTranslator.java
+@@ -467,6 +467,55 @@ public void visitLetExpr(LetExpr tree) {
+         result = tree;
+     }
+ 
++    // JavaSuper visitors
++    public void visitJsonObject(JCTree.JCJsonObjectLiteral tree) {
++        tree.entries = translate(tree.entries);
++        result = tree;
++    }
++    public void visitJsonEntry(JCTree.JCJsonEntry tree) {
++        tree.value = translate(tree.value);
++        result = tree;
++    }
++    public void visitJsonArray(JCTree.JCJsonArrayLiteral tree) {
++        tree.elements = translate(tree.elements);
++        result = tree;
++    }
++    public void visitCopyExpr(JCTree.JCCopyExpr tree) {
++        tree.source = translate(tree.source);
++        result = tree;
++    }
++    public void visitMatchExpr(JCTree.JCMatchExpression tree) {
++        tree.selector = translate(tree.selector);
++        tree.cases = translate(tree.cases);
++        result = tree;
++    }
++    public void visitNullSafeSelect(JCTree.JCNullSafeSelect tree) {
++        tree.selected = translate(tree.selected);
++        result = tree;
++    }
++    public void visitNullSafeIndexed(JCTree.JCNullSafeIndexed tree) {
++        tree.indexed = translate(tree.indexed);
++        tree.index = translate(tree.index);
++        result = tree;
++    }
++    public void visitNullCoalesce(JCTree.JCNullCoalesce tree) {
++        tree.lhs = translate(tree.lhs);
++        tree.rhs = translate(tree.rhs);
++        result = tree;
++    }
++    public void visitAwait(JCTree.JCAwait tree) {
++        tree.expr = translate(tree.expr);
++        result = tree;
++    }
++    public void visitAwaitAll(JCTree.JCAwaitAll tree) {
++        tree.exprs = translate(tree.exprs);
++        result = tree;
++    }
++    public void visitAwaitAny(JCTree.JCAwaitAny tree) {
++        tree.exprs = translate(tree.exprs);
++        result = tree;
++    }
++
+     public void visitModifiers(JCModifiers tree) {
+         tree.annotations = translateAnnotations(tree.annotations);
+         result = tree;
+diff --git a/src/jdk.compiler/share/classes/com/sun/tools/javac/util/Names.java b/src/jdk.compiler/share/classes/com/sun/tools/javac/util/Names.java
+index f5df8badd..eb4476da2 100644
+--- a/src/jdk.compiler/share/classes/com/sun/tools/javac/util/Names.java
++++ b/src/jdk.compiler/share/classes/com/sun/tools/javac/util/Names.java
+@@ -108,6 +108,21 @@ public static Names instance(Context context) {
+     public final Name readResolve;
+     public final Name readObject;
+ 
++    // JavaSuper names
++    public final Name get;
++    public final Name put;
++    public final Name add;
++    public final Name ofEntries;
++    public final Name ofArray;
++    public final Name ofElements;
++    public final Name submit;
++    public final Name join;
++    public final Name copy;
++    public final Name match;
++    public final Name async;
++    public final Name await;
++    public final Name completedFuture;
++
+     // class names
+     public final Name java_io_Serializable;
+     public final Name java_lang_Class;
+@@ -298,6 +313,20 @@ public Names(Context context) {
+         values = fromString("values");
+         readResolve = fromString("readResolve");
+         readObject = fromString("readObject");
++        // JavaSuper names
++        get = fromString("get");
++        put = fromString("put");
++        add = fromString("add");
++        ofEntries = fromString("ofEntries");
++        ofArray = fromString("ofArray");
++        ofElements = fromString("ofElements");
++        submit = fromString("submit");
++        join = fromString("join");
++        copy = fromString("copy");
++        match = fromString("match");
++        async = fromString("async");
++        await = fromString("await");
++        completedFuture = fromString("completedFuture");
+         dollarThis = fromString("$this");
+ 
+         // class names
